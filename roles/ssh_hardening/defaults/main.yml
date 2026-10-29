@@ -1,0 +1,29 @@
+---
+ssh_hardening_port: 22
+ssh_hardening_allow_groups:
+  - "{{ baseline_ssh_group | default('ssh-users') }}"
+ssh_hardening_allow_tcp_forwarding: false
+ssh_hardening_max_auth_tries: 3
+ssh_hardening_client_alive_interval: 300
+ssh_hardening_client_alive_count_max: 2
+
+# Refuse to disable password logins unless at least one member of the allowed
+# groups has an authorized_keys file. Only turn off for images without users.
+ssh_hardening_lockout_check: true
+
+ssh_hardening_ciphers:
+  - chacha20-poly1305@openssh.com
+  - aes256-gcm@openssh.com
+  - aes128-gcm@openssh.com
+  - aes256-ctr
+  - aes128-ctr
+ssh_hardening_macs:
+  - hmac-sha2-512-etm@openssh.com
+  - hmac-sha2-256-etm@openssh.com
+  - umac-128-etm@openssh.com
+# The post-quantum hybrid mlkem768x25519-sha256 is added in front of this list
+# when the installed OpenSSH supports it (9.9 and later).
+ssh_hardening_kex_algorithms:
+  - sntrup761x25519-sha512@openssh.com
+  - curve25519-sha256
+  - curve25519-sha256@libssh.org

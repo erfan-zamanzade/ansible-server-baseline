@@ -1,0 +1,15 @@
+---
+argument_specs:
+  main:
+    short_description: Harden the OpenSSH server
+    options:
+      ssh_hardening_port: {type: int, default: 22}
+      ssh_hardening_allow_groups: {type: list, elements: str}
+      ssh_hardening_allow_tcp_forwarding: {type: bool, default: false}
+      ssh_hardening_max_auth_tries: {type: int, default: 3}
+      ssh_hardening_client_alive_interval: {type: int, default: 300}
+      ssh_hardening_client_alive_count_max: {type: int, default: 2}
+      ssh_hardening_lockout_check: {type: bool, default: true}
+      ssh_hardening_ciphers: {type: list, elements: str}
+      ssh_hardening_macs: {type: list, elements: str}
+      ssh_hardening_kex_algorithms: {type: list, elements: str}

@@ -1,0 +1,51 @@
+---
+- name: Check the platform is supported
+  ansible.builtin.assert:
+    that:
+      - >-
+        (ansible_facts['distribution'] == 'Debian' and ansible_facts['distribution_major_version'] == '13')
+        or (ansible_facts['distribution'] == 'Ubuntu' and ansible_facts['distribution_version'] in ['24.04', '26.04'])
+    fail_msg: "Supported: Debian 13, Ubuntu 24.04 and 26.04 (found {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }})"
+    quiet: true
+
+- name: Install base packages
+  ansible.builtin.apt:
+    name: "{{ baseline_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Set the timezone
+  community.general.timezone:
+    name: "{{ baseline_timezone }}"
+
+- name: Configure time synchronisation
+  ansible.builtin.import_tasks: time_sync.yml
+  when: baseline_time_sync
+
+- name: Configure admin users
+  ansible.builtin.import_tasks: users.yml
+
+- name: Apply sysctl hardening
+  ansible.builtin.import_tasks: sysctl.yml
+
+- name: Create the journald drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/journald.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Limit journald disk usage
+  ansible.builtin.template:
+    src: journald.conf.j2
+    dest: /etc/systemd/journald.conf.d/90-baseline.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart journald
+
+- name: Configure unattended upgrades
+  ansible.builtin.import_tasks: unattended_upgrades.yml
+  when: baseline_unattended_upgrades

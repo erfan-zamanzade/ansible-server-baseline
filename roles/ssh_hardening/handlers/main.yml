@@ -1,0 +1,24 @@
+---
+# Ubuntu 24.04+ starts sshd through ssh.socket, so the listening port comes
+# from a systemd generator: a port change needs daemon-reload and a socket
+# restart, not just a service restart. Debian runs ssh.service directly.
+- name: Check the effective sshd configuration
+  ansible.builtin.command: /usr/sbin/sshd -t
+  changed_when: false
+  listen: Restart sshd
+
+- name: Restart ssh.socket
+  ansible.builtin.systemd_service:
+    name: ssh.socket
+    state: restarted
+    daemon_reload: true
+  when: ssh_hardening_socket_activated
+  listen: Restart sshd
+
+- name: Restart ssh.service
+  ansible.builtin.systemd_service:
+    name: ssh
+    # With socket activation the service may not be running yet; only
+    # restart it if it is.
+    state: "{{ 'restarted' if not ssh_hardening_socket_activated or ssh_hardening_service_active else 'stopped' }}"
+  listen: Restart sshd

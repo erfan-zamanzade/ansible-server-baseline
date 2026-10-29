@@ -1,0 +1,15 @@
+// {{ ansible_managed }}
+// Security updates are on by default in 50unattended-upgrades; this file only
+// adds the settings that differ.
+{% if baseline_unattended_extra_origins %}
+Unattended-Upgrade::Origins-Pattern {
+{% for origin in baseline_unattended_extra_origins %}
+        "{{ origin }}";
+{% endfor %}
+};
+{% endif %}
+Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+Unattended-Upgrade::Remove-Unused-Dependencies "true";
+Unattended-Upgrade::Automatic-Reboot "{{ baseline_unattended_reboot | lower }}";
+Unattended-Upgrade::Automatic-Reboot-Time "{{ baseline_unattended_reboot_time }}";
+Unattended-Upgrade::SyslogEnable "true";

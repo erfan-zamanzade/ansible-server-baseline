@@ -1,0 +1,61 @@
+#!/usr/sbin/nft -f
+# {{ ansible_managed }}
+#
+# Only the inet "baseline" table is managed here. There is deliberately no
+# `flush ruleset`: Docker (NAT and forwarding) and fail2ban keep their rules in
+# their own tables and must survive a reload of this file.
+#
+# Note: ports Docker publishes are DNAT-ed before this input chain sees them,
+# so a container published on 0.0.0.0 bypasses this firewall. The docker role
+# makes 127.0.0.1 the default bind address and services sit behind Nginx.
+
+table inet baseline
+delete table inet baseline
+
+table inet baseline {
+{% if firewall_ssh_sources %}
+	set ssh_sources_v4 {
+		type ipv4_addr; flags interval
+		elements = { {{ firewall_ssh_sources | join(', ') }} }
+	}
+{% endif %}
+{% if firewall_monitoring_sources %}
+	set monitoring_sources_v4 {
+		type ipv4_addr; flags interval
+		elements = { {{ firewall_monitoring_sources | join(', ') }} }
+	}
+{% endif %}
+
+	chain input {
+		type filter hook input priority filter; policy drop;
+
+		ct state established,related accept
+		ct state invalid drop
+		iif "lo" accept
+
+		# ICMP needed for path MTU discovery and IPv6 neighbour discovery.
+		ip protocol icmp icmp type { destination-unreachable, time-exceeded, parameter-problem } accept
+		ip protocol icmp icmp type echo-request limit rate 10/second accept
+		ip6 nexthdr icmpv6 icmpv6 type { destination-unreachable, packet-too-big, time-exceeded, parameter-problem, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert } accept
+		ip6 nexthdr icmpv6 icmpv6 type echo-request limit rate 10/second accept
+
+{% if firewall_ssh_sources %}
+		ip saddr @ssh_sources_v4 tcp dport {{ firewall_ssh_port }} ct state new accept
+{% else %}
+		tcp dport {{ firewall_ssh_port }} ct state new accept
+{% endif %}
+{% if firewall_public_tcp_ports %}
+		tcp dport { {{ firewall_public_tcp_ports | join(', ') }} } ct state new accept
+{% endif %}
+{% if firewall_monitoring_sources and firewall_monitoring_tcp_ports %}
+		ip saddr @monitoring_sources_v4 tcp dport { {{ firewall_monitoring_tcp_ports | join(', ') }} } ct state new accept
+{% endif %}
+{% for rule in firewall_extra_input_rules %}
+		{{ rule }}
+{% endfor %}
+
+{% if firewall_log_drops %}
+		limit rate 5/minute log prefix "nft-drop: " flags all
+{% endif %}
+	}
+}

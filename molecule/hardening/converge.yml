@@ -1,0 +1,21 @@
+---
+- name: Converge
+  hosts: all
+  vars:
+    baseline_admin_users:
+      - name: erfan
+        ssh_keys:
+          - "{{ lookup('ansible.builtin.file', molecule_ephemeral_directory ~ '/id_test.pub') }}"
+    # A privileged test container shares the host clock.
+    baseline_time_sync: false
+    # Moving SSH off port 22 exercises the socket-activation handling on Ubuntu.
+    ssh_hardening_port: 2222
+    # Monitoring is allowed from a documentation address only, so the test can
+    # check that port 9100 is dropped for everyone else.
+    firewall_monitoring_sources:
+      - 192.0.2.10
+  roles:
+    - baseline
+    - firewall
+    - ssh_hardening
+    - fail2ban

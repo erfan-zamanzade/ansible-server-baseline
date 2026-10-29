@@ -1,0 +1,15 @@
+---
+argument_specs:
+  main:
+    short_description: Docker CE
+    options:
+      docker_apt_key_url: {type: str}
+      docker_apt_key_fingerprint: {type: str}
+      docker_packages: {type: list, elements: str}
+      docker_users: {type: list, elements: str}
+      docker_log_max_size: {type: str}
+      docker_log_max_file: {type: int}
+      docker_live_restore: {type: bool}
+      docker_default_bind_ip: {type: str}
+      docker_metrics_addr: {type: str}
+      docker_daemon_options: {type: dict}

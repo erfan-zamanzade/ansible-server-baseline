@@ -1,0 +1,12 @@
+---
+argument_specs:
+  main:
+    short_description: fail2ban for sshd
+    options:
+      fail2ban_ssh_port: {type: int}
+      fail2ban_bantime: {type: str}
+      fail2ban_findtime: {type: str}
+      fail2ban_maxretry: {type: int}
+      fail2ban_bantime_increment: {type: bool}
+      fail2ban_bantime_maxtime: {type: str}
+      fail2ban_ignoreip: {type: list, elements: str}

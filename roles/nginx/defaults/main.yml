@@ -1,0 +1,21 @@
+---
+# Reverse-proxy sites. TLS material comes from variables (Ansible Vault in
+# real inventories); ACME issuance is out of scope for this role.
+#   - name: app
+#     server_name: app.example.com
+#     upstream: 127.0.0.1:8080
+#     tls_certificate: "{{ vault_app_tls_certificate }}"   # PEM chain
+#     tls_private_key: "{{ vault_app_tls_private_key }}"
+#     # Paths only reachable from these networks (e.g. the app's /metrics).
+#     internal_locations: [/metrics]
+#     client_max_body_size: 10m
+nginx_sites: []
+
+# Networks allowed to reach `internal_locations` through the proxy.
+nginx_internal_networks:
+  - 127.0.0.1/32
+
+nginx_hsts_max_age: 31536000
+# Requests per second per client IP, with a burst allowance.
+nginx_rate_limit: 20r/s
+nginx_rate_limit_burst: 40

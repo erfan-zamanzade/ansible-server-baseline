@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Restore one database from a backup snapshot into its live container.
+#   backup-restore-db <container> <database> [snapshot] --yes
+# The restore runs in a single transaction: if any statement fails, the
+# database is left as it was.
+set -euo pipefail
+# shellcheck source=roles/backup/files/backup-common.sh
+source /usr/local/lib/server-baseline/backup-common.sh
+
+usage() { echo "usage: $0 <container> <database> [snapshot, default latest] --yes" >&2; exit 2; }
+
+confirmed=false
+args=()
+for arg in "$@"; do
+  if [[ "$arg" == --yes ]]; then confirmed=true; else args+=("$arg"); fi
+done
+[[ ${#args[@]} -ge 2 ]] || usage
+container="${args[0]}" database="${args[1]}" snapshot="${args[2]:-latest}"
+$confirmed || die "this replaces the contents of $database in $container; add --yes to confirm"
+
+user=""
+for entry in "${BACKUP_POSTGRES[@]}"; do
+  split_pg_entry "$entry"
+  if [[ "$PG_CONTAINER" == "$container" && "$PG_DATABASE" == "$database" ]]; then user="$PG_USER"; fi
+done
+[[ -n "$user" ]] || die "$container/$database is not in the backup configuration"
+
+scratch="$(mktemp -d /var/tmp/backup-restore.XXXXXX)"
+trap 'rm -rf "$scratch"' EXIT
+dump_path="/var/backups/staging/$container--$database.dump"
+
+log "restoring $dump_path from snapshot $snapshot"
+restic restore "$snapshot" --quiet --tag scheduled --host "$(hostname)" \
+  --target "$scratch" --include "$dump_path" --verify
+[[ -s "$scratch$dump_path" ]] || die "snapshot $snapshot has no dump of $database"
+
+log "loading the dump into $database on $container"
+docker exec -i "$container" pg_restore --username="$user" --dbname="$database" \
+  --clean --if-exists --no-owner --single-transaction --exit-on-error <"$scratch$dump_path"
+log "restore of $database finished"

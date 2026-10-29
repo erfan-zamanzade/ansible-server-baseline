@@ -1,0 +1,31 @@
+# {{ ansible_managed }}
+ssl_session_cache shared:SSL:10m;
+ssl_session_timeout 1d;
+ssl_session_tickets off;
+
+limit_req_zone $binary_remote_addr zone=per_ip:10m rate={{ nginx_rate_limit }};
+limit_req_status 429;
+
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+# One JSON object per request, ready for a log shipper.
+log_format json_combined escape=json '{'
+    '"time":"$time_iso8601","remote_addr":"$remote_addr","host":"$host",'
+    '"request":"$request","status":$status,"bytes":$body_bytes_sent,'
+    '"request_time":$request_time,"upstream_time":"$upstream_response_time",'
+    '"upstream_status":"$upstream_status","user_agent":"$http_user_agent",'
+    '"request_id":"$request_id"}';
+
+# Default server: unknown host names get no answer at all.
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    listen 443 ssl default_server;
+    listen [::]:443 ssl default_server;
+    ssl_reject_handshake on;
+    server_name _;
+    return 444;
+}

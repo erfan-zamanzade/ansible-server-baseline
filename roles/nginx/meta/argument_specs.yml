@@ -1,0 +1,20 @@
+---
+argument_specs:
+  main:
+    short_description: Nginx reverse proxy
+    options:
+      nginx_sites:
+        type: list
+        elements: dict
+        options:
+          name: {type: str, required: true}
+          server_name: {type: str, required: true}
+          upstream: {type: str, required: true}
+          tls_certificate: {type: str, required: true}
+          tls_private_key: {type: str, required: true, no_log: true}
+          internal_locations: {type: list, elements: str, default: []}
+          client_max_body_size: {type: str, default: 10m}
+      nginx_internal_networks: {type: list, elements: str}
+      nginx_hsts_max_age: {type: int}
+      nginx_rate_limit: {type: str}
+      nginx_rate_limit_burst: {type: int}

@@ -1,0 +1,114 @@
+---
+- name: Remove distribution packages that conflict with Docker CE
+  ansible.builtin.apt:
+    name:
+      - docker.io
+      - docker-compose
+      - docker-doc
+      - podman-docker
+      - containerd
+      - runc
+    state: absent
+
+- name: Install the tools needed to add the repository
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - gnupg
+      - python3-debian   # for deb822_repository
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Create the apt keyring directory
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Download the Docker repository key
+  ansible.builtin.get_url:
+    url: "{{ docker_apt_key_url }}"
+    dest: /etc/apt/keyrings/docker.asc
+    owner: root
+    group: root
+    mode: "0644"
+  register: docker_key_download
+
+- name: Read the key fingerprint
+  ansible.builtin.command: gpg --show-keys --with-colons /etc/apt/keyrings/docker.asc
+  register: docker_key_info
+  changed_when: false
+
+- name: Verify the key is Docker's release key
+  ansible.builtin.assert:
+    that: docker_apt_key_fingerprint in (docker_key_info.stdout | regex_findall('^fpr:+([0-9A-F]+):', multiline=True))
+    fail_msg: "The key at {{ docker_apt_key_url }} does not have the expected fingerprint {{ docker_apt_key_fingerprint }}."
+    quiet: true
+
+- name: Add the Docker repository
+  ansible.builtin.deb822_repository:
+    name: docker
+    types: deb
+    uris: "https://download.docker.com/linux/{{ ansible_facts['distribution'] | lower }}"
+    suites: "{{ ansible_facts['distribution_release'] }}"
+    components: stable
+    architectures: "{{ 'arm64' if ansible_facts['architecture'] == 'aarch64' else 'amd64' }}"
+    signed_by: /etc/apt/keyrings/docker.asc
+  register: docker_repo
+
+- name: Install Docker
+  ansible.builtin.apt:
+    name: "{{ docker_packages }}"
+    state: present
+    update_cache: "{{ docker_repo is changed }}"
+
+- name: Create the Docker config directory
+  ansible.builtin.file:
+    path: /etc/docker
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Write daemon.json
+  ansible.builtin.copy:
+    dest: /etc/docker/daemon.json
+    content: "{{ docker_daemon_config | to_nice_json(indent=2) }}\n"
+    owner: root
+    group: root
+    mode: "0644"
+    validate: dockerd --validate --config-file %s
+  vars:
+    docker_daemon_config: >-
+      {{
+        {
+          'log-driver': 'local',
+          'log-opts': {'max-size': docker_log_max_size, 'max-file': docker_log_max_file | string},
+          'live-restore': docker_live_restore,
+          'ip': docker_default_bind_ip,
+          'userland-proxy': false,
+          'no-new-privileges': true
+        }
+        | combine({'metrics-addr': docker_metrics_addr} if docker_metrics_addr else {})
+        | combine(docker_daemon_options)
+      }}
+  notify: Restart docker
+
+- name: Enable Docker
+  ansible.builtin.systemd_service:
+    name: docker
+    enabled: true
+    state: started
+
+- name: Add users to the docker group
+  ansible.builtin.user:
+    name: "{{ item }}"
+    groups: docker
+    append: true
+  loop: "{{ docker_users }}"
+
+- name: Apply daemon changes now
+  ansible.builtin.meta: flush_handlers

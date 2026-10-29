@@ -1,0 +1,18 @@
+---
+# Probe ports of the instance from the Molecule host and compare with
+# `expected_ports` (port -> open | closed | filtered).
+- name: Probe ports from outside the instance
+  ansible.builtin.command: python3 {{ molecule_scenario_directory }}/../resources/probe-port.py {{ instance_ip }} {{ item.key }}
+  delegate_to: localhost
+  register: probe_results
+  changed_when: false
+  loop: "{{ expected_ports | dict2items }}"
+
+- name: Compare with the expected firewall result
+  ansible.builtin.assert:
+    that: item.stdout == item.item.value
+    fail_msg: "port {{ item.item.key }}: expected {{ item.item.value }}, got {{ item.stdout }}"
+    success_msg: "port {{ item.item.key }}: {{ item.stdout }}"
+  loop: "{{ probe_results.results }}"
+  loop_control:
+    label: "{{ item.item.key }}"

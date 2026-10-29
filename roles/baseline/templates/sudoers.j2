@@ -1,0 +1,6 @@
+# {{ ansible_managed }}
+{% for user in baseline_admin_users if user.sudo | default(true) %}
+{{ user.name }} ALL=(ALL:ALL) NOPASSWD: ALL
+{% else %}
+# No admin users with sudo.
+{% endfor %}

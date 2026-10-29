@@ -1,0 +1,20 @@
+---
+- name: Install chrony
+  ansible.builtin.apt:
+    name: chrony
+    state: present
+
+- name: Configure NTP servers
+  ansible.builtin.template:
+    src: chrony-sources.j2
+    dest: /etc/chrony/sources.d/baseline.sources
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart chrony
+
+- name: Enable chrony
+  ansible.builtin.systemd_service:
+    name: chrony
+    enabled: true
+    state: started

@@ -1,0 +1,170 @@
+#!/usr/bin/env bash
+# One command that answers "is this server healthy?":
+#   server-healthcheck             human-readable report, exit 1 on any failure
+#   server-healthcheck --textfile  also publish server_healthcheck_* metrics for
+#                                  node_exporter; always exits 0 so the timer's
+#                                  unit never shows as failed (the metrics carry
+#                                  the result)
+set -uo pipefail
+
+# shellcheck source=/dev/null
+source /etc/server-healthcheck.conf
+
+textfile=false
+[[ "${1:-}" == --textfile ]] && textfile=true
+
+failures=0
+metrics=()
+
+# record CHECK_NAME OK(0|1) MESSAGE
+record() {
+  local name="$1" passed="$2" message="$3"
+  if [[ "$passed" == 1 ]]; then
+    printf 'OK    %-24s %s\n' "$name" "$message"
+  else
+    printf 'FAIL  %-24s %s\n' "$name" "$message"
+    failures=$((failures + 1))
+  fi
+  metrics+=("server_healthcheck_status{check=\"$name\"} $passed")
+}
+
+check_disks() {
+  local mount used
+  while read -r mount used; do
+    # Containers bind-mount files such as /etc/hosts; only check directories.
+    [[ -d "$mount" ]] || continue
+    used="${used%\%}"
+    if [[ "$used" -le "$HC_DISK_MAX_PERCENT" ]]; then
+      record "disk:$mount" 1 "${used}% used"
+    else
+      record "disk:$mount" 0 "${used}% used (limit ${HC_DISK_MAX_PERCENT}%)"
+    fi
+  done < <(df --local --output=target,pcent -x tmpfs -x devtmpfs -x overlay -x squashfs 2>/dev/null | tail -n +2)
+}
+
+check_memory() {
+  local total available percent
+  total="$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)"
+  available="$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)"
+  percent=$((available * 100 / total))
+  if [[ "$percent" -ge "$HC_MEMORY_MIN_AVAILABLE_PERCENT" ]]; then
+    record memory 1 "${percent}% available"
+  else
+    record memory 0 "${percent}% available (minimum ${HC_MEMORY_MIN_AVAILABLE_PERCENT}%)"
+  fi
+}
+
+check_services() {
+  local service state
+  for service in "${HC_SERVICES[@]}"; do
+    state="$(systemctl is-active "$service" 2>/dev/null)"
+    if [[ "$state" == active ]]; then
+      record "service:$service" 1 active
+    else
+      record "service:$service" 0 "${state:-unknown}"
+    fi
+  done
+}
+
+check_failed_units() {
+  local failed
+  failed="$(systemctl list-units --state=failed --no-legend --plain 2>/dev/null | awk '{print $1}' | paste -sd ' ' -)"
+  if [[ -z "$failed" ]]; then
+    record failed-units 1 none
+  else
+    record failed-units 0 "$failed"
+  fi
+}
+
+check_containers() {
+  command -v docker >/dev/null || return 0
+  local bad
+  # Docker ANDs different filter keys, so ask twice.
+  bad="$( {
+    docker ps --all --filter status=restarting --format '{{.Names}}'
+    docker ps --filter health=unhealthy --format '{{.Names}}'
+  } 2>/dev/null | sort -u | paste -sd ' ' -)"
+  if [[ -z "$bad" ]]; then
+    record containers 1 "$(docker ps --quiet | wc -l) running, none unhealthy"
+  else
+    record containers 0 "unhealthy or restarting: $bad"
+  fi
+}
+
+check_http() {
+  local entry name url host port code args
+  for entry in "${HC_HTTP_CHECKS[@]}"; do
+    IFS='|' read -r name url <<<"$entry"
+    host="$(sed -E 's#^https?://([^/:]+).*#\1#' <<<"$url")"
+    port="$(sed -nE 's#^https?://[^/:]+:([0-9]+).*#\1#p' <<<"$url")"
+    [[ -n "$port" ]] || { [[ "$url" == https://* ]] && port=443 || port=80; }
+    args=(--silent --output /dev/null --write-out '%{http_code}' --max-time 10 --resolve "$host:$port:127.0.0.1")
+    [[ -n "$HC_CA_FILE" ]] && args+=(--cacert "$HC_CA_FILE")
+    code="$(curl "${args[@]}" "$url" 2>/dev/null)"
+    if [[ "$code" =~ ^2 ]]; then
+      record "http:$name" 1 "$url -> $code"
+    else
+      record "http:$name" 0 "$url -> ${code:-no answer}"
+    fi
+  done
+}
+
+check_certificates() {
+  local cert days end
+  for cert in "${HC_TLS_CERTS[@]}"; do
+    [[ -f "$cert" ]] || continue
+    end="$(openssl x509 -in "$cert" -noout -enddate | cut -d= -f2)"
+    days=$(( ($(date -d "$end" +%s) - $(date +%s)) / 86400 ))
+    if [[ "$days" -ge "$HC_TLS_MIN_DAYS" ]]; then
+      record "tls:$(basename "$cert" .crt)" 1 "expires in $days days"
+    else
+      record "tls:$(basename "$cert" .crt)" 0 "expires in $days days (minimum $HC_TLS_MIN_DAYS)"
+    fi
+  done
+}
+
+check_backup_age() {
+  [[ "$HC_BACKUP_MAX_AGE_HOURS" -gt 0 ]] || return 0
+  local last age
+  last="$(awk '$1 == "backup_last_success_timestamp_seconds" {print $2}' "$HC_TEXTFILE_DIR/backup.prom" 2>/dev/null)"
+  if [[ -z "$last" || "$last" == 0 ]]; then
+    record backup 0 "no successful backup recorded"
+    return
+  fi
+  age=$(( ($(date +%s) - ${last%.*}) / 3600 ))
+  if [[ "$age" -lt "$HC_BACKUP_MAX_AGE_HOURS" ]]; then
+    record backup 1 "last success ${age}h ago"
+  else
+    record backup 0 "last success ${age}h ago (limit ${HC_BACKUP_MAX_AGE_HOURS}h)"
+  fi
+}
+
+check_disks
+check_memory
+check_services
+check_failed_units
+check_containers
+check_http
+check_certificates
+check_backup_age
+
+if $textfile && [[ -d "$HC_TEXTFILE_DIR" ]]; then
+  tmp="$(mktemp "$HC_TEXTFILE_DIR/.healthcheck.XXXXXX")"
+  {
+    echo '# HELP server_healthcheck_status 1 if the check passed, 0 if it failed.'
+    echo '# TYPE server_healthcheck_status gauge'
+    printf '%s\n' "${metrics[@]}"
+    echo '# HELP server_healthcheck_last_run_timestamp_seconds When the health check last ran.'
+    echo '# TYPE server_healthcheck_last_run_timestamp_seconds gauge'
+    echo "server_healthcheck_last_run_timestamp_seconds $(date +%s)"
+  } >"$tmp"
+  chmod 0644 "$tmp"
+  mv -f "$tmp" "$HC_TEXTFILE_DIR/healthcheck.prom"
+fi
+
+if [[ "$failures" -gt 0 ]]; then
+  echo "$failures check(s) failed"
+  $textfile && exit 0
+  exit 1
+fi
+echo "all checks passed"

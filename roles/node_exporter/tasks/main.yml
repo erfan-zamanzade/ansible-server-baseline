@@ -1,0 +1,73 @@
+---
+- name: Create the node_exporter system user
+  ansible.builtin.user:
+    name: node-exp
+    system: true
+    shell: /usr/sbin/nologin
+    home: /nonexistent
+    create_home: false
+
+- name: Check the installed version
+  ansible.builtin.command: /usr/local/bin/node_exporter --version
+  register: node_exporter_installed
+  changed_when: false
+  failed_when: false
+
+- name: Install node_exporter {{ node_exporter_version }}
+  when: ('version ' ~ node_exporter_version ~ ' ') not in (node_exporter_installed.stdout | default(''))
+  block:
+    - name: Download the release
+      ansible.builtin.get_url:
+        url: "https://github.com/prometheus/node_exporter/releases/download/v{{ node_exporter_version }}/{{ node_exporter_package }}.tar.gz"
+        dest: "/tmp/{{ node_exporter_package }}.tar.gz"
+        checksum: "sha256:{{ node_exporter_checksums[node_exporter_arch] }}"
+        mode: "0644"
+
+    - name: Unpack the release
+      ansible.builtin.unarchive:
+        src: "/tmp/{{ node_exporter_package }}.tar.gz"
+        dest: /tmp
+        remote_src: true
+
+    - name: Install the binary
+      ansible.builtin.copy:
+        src: "/tmp/{{ node_exporter_package }}/node_exporter"
+        dest: /usr/local/bin/node_exporter
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0755"
+      notify: Restart node_exporter
+
+  always:
+    - name: Remove the download
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "/tmp/{{ node_exporter_package }}.tar.gz"
+        - "/tmp/{{ node_exporter_package }}"
+
+- name: Create the textfile collector directory
+  ansible.builtin.file:
+    path: "{{ node_exporter_textfile_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the systemd unit
+  ansible.builtin.template:
+    src: node_exporter.service.j2
+    dest: /etc/systemd/system/node_exporter.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart node_exporter
+
+- name: Enable node_exporter
+  ansible.builtin.systemd_service:
+    name: node_exporter
+    enabled: true
+    state: started
+    daemon_reload: true

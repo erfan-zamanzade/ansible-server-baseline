@@ -1,0 +1,82 @@
+---
+- name: Install the OpenSSH server
+  ansible.builtin.apt:
+    name: openssh-server
+    state: present
+
+- name: Find users who can still log in with a key
+  ansible.builtin.shell:
+    executable: /bin/bash
+    cmd: |
+      set -o pipefail
+      for group in {{ ssh_hardening_allow_groups | map('quote') | join(' ') }}; do
+        for user in $(getent group "$group" | cut -d: -f4 | tr ',' ' '); do
+          home="$(getent passwd "$user" | cut -d: -f6)"
+          if [[ -s "$home/.ssh/authorized_keys" ]]; then echo "$user"; fi
+        done
+      done
+  register: ssh_hardening_key_users
+  changed_when: false
+  when: ssh_hardening_lockout_check
+
+- name: Refuse to lock everyone out
+  ansible.builtin.assert:
+    that: ssh_hardening_key_users.stdout_lines | length > 0
+    fail_msg: >-
+      No member of {{ ssh_hardening_allow_groups | join(', ') }} has an authorized key.
+      Password and root logins would be disabled with nobody able to log in.
+      Add a user with a key (baseline_admin_users) first.
+    success_msg: "Key logins available for: {{ ssh_hardening_key_users.stdout_lines | join(', ') }}"
+  when: ssh_hardening_lockout_check
+
+- name: Read the OpenSSH version
+  ansible.builtin.command: ssh -V
+  register: ssh_hardening_version_output
+  changed_when: false
+
+- name: Detect socket activation
+  ansible.builtin.systemd_service:
+    name: ssh.socket
+  register: ssh_hardening_socket_state
+  failed_when: false
+
+- name: Detect whether ssh.service runs
+  ansible.builtin.systemd_service:
+    name: ssh.service
+  register: ssh_hardening_service_state
+  failed_when: false
+
+- name: Work out version-dependent settings
+  ansible.builtin.set_fact:
+    ssh_hardening_openssh_version: "{{ ssh_hardening_version_output.stderr | regex_search('OpenSSH_([0-9]+\\.[0-9]+)', '\\1') | first }}"
+    ssh_hardening_socket_activated: "{{ (ssh_hardening_socket_state.status | default({})).UnitFileState | default('') == 'enabled' }}"
+    ssh_hardening_service_active: "{{ (ssh_hardening_service_state.status | default({})).ActiveState | default('') == 'active' }}"
+
+# `sshd -t` needs the privilege separation directory, which only exists while
+# ssh.service runs (with socket activation it may not have started yet).
+- name: Create the sshd privilege separation directory
+  ansible.builtin.file:
+    path: /run/sshd
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Write the hardening drop-in
+  ansible.builtin.template:
+    src: hardening.conf.j2
+    # sshd keeps the first value it reads and the distribution's sshd_config
+    # includes sshd_config.d/*.conf first, so a low number wins over later
+    # files such as 50-cloud-init.conf.
+    dest: /etc/ssh/sshd_config.d/05-hardening.conf
+    owner: root
+    group: root
+    mode: "0644"
+    validate: /usr/sbin/sshd -t -f %s
+  notify: Restart sshd
+
+- name: Make sure sshd is enabled
+  ansible.builtin.systemd_service:
+    name: "{{ 'ssh.socket' if ssh_hardening_socket_activated else 'ssh.service' }}"
+    enabled: true
+    state: started

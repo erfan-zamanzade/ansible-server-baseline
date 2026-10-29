@@ -1,0 +1,19 @@
+---
+argument_specs:
+  main:
+    short_description: Server health check
+    options:
+      healthcheck_disk_max_percent: {type: int}
+      healthcheck_memory_min_available_percent: {type: int}
+      healthcheck_services: {type: list, elements: str}
+      healthcheck_http_checks:
+        type: list
+        elements: dict
+        options:
+          name: {type: str, required: true}
+          url: {type: str, required: true}
+      healthcheck_ca_file: {type: str}
+      healthcheck_tls_min_days: {type: int}
+      healthcheck_backup_max_age_hours: {type: int}
+      healthcheck_schedule: {type: str}
+      healthcheck_textfile_dir: {type: path}

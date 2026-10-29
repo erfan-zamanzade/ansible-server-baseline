@@ -1,0 +1,187 @@
+---
+- name: Verify
+  hosts: all
+  gather_facts: true
+  vars:
+    instance_ip: "{{ ansible_facts['default_ipv4']['address'] }}"
+    # The address the instance sees the Molecule host connecting from.
+    controller_ip: "{{ ansible_facts['default_ipv4']['gateway'] }}"
+    ssh_key: "{{ molecule_ephemeral_directory }}/id_test"
+    ssh_opts: >-
+      -i {{ ssh_key }} -p 2222 -o BatchMode=yes -o ConnectTimeout=5
+      -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR
+  tasks:
+    # --- baseline -----------------------------------------------------------
+    - name: Read the live network sysctls
+      ansible.builtin.command: sysctl -n net.ipv4.conf.all.rp_filter net.ipv4.conf.all.accept_redirects net.ipv4.tcp_syncookies
+      register: live_sysctl
+      changed_when: false
+
+    - name: Check network sysctls are applied and kernel ones are on file
+      ansible.builtin.assert:
+        that:
+          - live_sysctl.stdout_lines == ['1', '0', '1']
+        quiet: true
+
+    - name: Read the sysctl file
+      ansible.builtin.slurp:
+        src: /etc/sysctl.d/90-baseline.conf
+      register: sysctl_file
+
+    - name: Check kernel sysctls are written for the next boot
+      ansible.builtin.assert:
+        that:
+          - "'kernel.kptr_restrict=2' in (sysctl_file.content | b64decode)"
+          - "'kernel.dmesg_restrict=1' in (sysctl_file.content | b64decode)"
+        quiet: true
+
+    - name: Read the effective unattended-upgrades settings
+      ansible.builtin.command: apt-config dump Unattended-Upgrade APT::Periodic
+      register: apt_config
+      changed_when: false
+
+    - name: Check unattended upgrades are on and do not reboot
+      ansible.builtin.assert:
+        that:
+          - "'APT::Periodic::Unattended-Upgrade \"1\";' in apt_config.stdout"
+          - "'Unattended-Upgrade::Automatic-Reboot \"false\";' in apt_config.stdout"
+        quiet: true
+
+    - name: Check the admin user and sudo rule
+      ansible.builtin.command: sudo -l -U erfan
+      register: sudo_rules
+      changed_when: false
+      failed_when: "'NOPASSWD: ALL' not in sudo_rules.stdout"
+
+    # --- SSH ----------------------------------------------------------------
+    - name: Read the effective sshd configuration
+      ansible.builtin.command: sshd -T
+      register: sshd_effective
+      changed_when: false
+
+    - name: Check key-only logins, no root, port 2222
+      ansible.builtin.assert:
+        that:
+          - "'port 2222' in sshd_effective.stdout_lines"
+          - "'permitrootlogin no' in sshd_effective.stdout_lines"
+          - "'passwordauthentication no' in sshd_effective.stdout_lines"
+          - "'kbdinteractiveauthentication no' in sshd_effective.stdout_lines"
+          - "'authenticationmethods publickey' in sshd_effective.stdout_lines"
+        quiet: true
+
+    - name: Log in with the admin key over the network and use sudo
+      ansible.builtin.command: ssh {{ ssh_opts }} erfan@{{ instance_ip }} sudo -n id -u
+      delegate_to: localhost
+      register: key_login
+      changed_when: false
+      failed_when: key_login.stdout != '0'
+
+    - name: Try a password login
+      ansible.builtin.command: >-
+        ssh {{ ssh_opts }} -o PubkeyAuthentication=no -o PreferredAuthentications=password,keyboard-interactive
+        erfan@{{ instance_ip }} true
+      delegate_to: localhost
+      register: password_login
+      changed_when: false
+      failed_when: password_login.rc == 0 or 'Permission denied (publickey)' not in password_login.stderr
+
+    - name: Try root with the admin key
+      ansible.builtin.command: ssh {{ ssh_opts }} root@{{ instance_ip }} true
+      delegate_to: localhost
+      register: root_login
+      changed_when: false
+      failed_when: root_login.rc == 0
+
+    # --- firewall -----------------------------------------------------------
+    - name: Check what the firewall lets through
+      ansible.builtin.include_tasks: ../resources/tasks/probe-ports.yml
+      vars:
+        expected_ports:
+          "2222": open       # SSH
+          "22": filtered     # old SSH port, no longer allowed
+          "80": closed       # allowed, nothing listens yet
+          "443": closed
+          "9100": filtered   # monitoring port, only for 192.0.2.10
+          "5432": filtered
+
+    # --- fail2ban drill -----------------------------------------------------
+    - name: Fail SSH logins from the Molecule host until fail2ban reacts
+      ansible.builtin.command: ssh {{ ssh_opts }} -i /dev/null intruder@{{ instance_ip }} true
+      delegate_to: localhost
+      register: bad_login
+      changed_when: false
+      failed_when: false
+      loop: "{{ range(6) | list }}"
+      loop_control:
+        label: "attempt {{ item + 1 }}"
+
+    - name: Wait for the ban
+      ansible.builtin.command: fail2ban-client get sshd banned
+      register: banned
+      changed_when: false
+      retries: 15
+      delay: 2
+      until: controller_ip in banned.stdout
+
+    - name: Check the banned address can no longer reach SSH
+      ansible.builtin.include_tasks: ../resources/tasks/probe-ports.yml
+      vars:
+        expected_ports:
+          "2222": filtered
+
+    # fail2ban creates its nftables table on the first ban. Restarting the
+    # firewall must not wipe it (the packaged unit would flush the ruleset).
+    - name: Restart nftables while the ban is active
+      ansible.builtin.systemd_service:
+        name: nftables
+        state: restarted
+      changed_when: false
+
+    - name: List nftables tables after the restart
+      ansible.builtin.command: nft list tables
+      register: nft_tables
+      changed_when: false
+
+    - name: Check the firewall restart left fail2ban's table alone
+      ansible.builtin.assert:
+        that:
+          - "'table inet baseline' in nft_tables.stdout_lines"
+          - "'table inet f2b-table' in nft_tables.stdout_lines"
+        fail_msg: "tables after restart: {{ nft_tables.stdout_lines }}"
+        quiet: true
+
+    - name: Check the address is still blocked after the firewall restart
+      ansible.builtin.include_tasks: ../resources/tasks/probe-ports.yml
+      vars:
+        expected_ports:
+          "2222": filtered
+
+    - name: Unban the Molecule host
+      ansible.builtin.command: fail2ban-client set sshd unbanip {{ controller_ip }}
+      changed_when: true
+
+    - name: Log in again after the unban
+      ansible.builtin.command: ssh {{ ssh_opts }} erfan@{{ instance_ip }} true
+      delegate_to: localhost
+      changed_when: false
+
+- name: Verify the lockout guard
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Run ssh_hardening for a group nobody with a key belongs to
+      block:
+        - name: Apply ssh_hardening with an empty login group
+          ansible.builtin.include_role:
+            name: ssh_hardening
+          vars:
+            ssh_hardening_port: 2222
+            ssh_hardening_allow_groups: [nobody-here]
+        - name: The role should have stopped
+          ansible.builtin.fail:
+            msg: ssh_hardening did not refuse a configuration that locks everyone out
+      rescue:
+        - name: Check it was the lockout guard that stopped it
+          ansible.builtin.assert:
+            that: "'No member of nobody-here has an authorized key' in ansible_failed_result.msg"
+            quiet: true

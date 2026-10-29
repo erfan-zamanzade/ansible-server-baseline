@@ -1,0 +1,9 @@
+---
+- name: Create a throwaway SSH key for the tests
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Generate the key pair
+      ansible.builtin.command:
+        cmd: ssh-keygen -q -t ed25519 -N "" -C molecule-test -f {{ molecule_ephemeral_directory }}/id_test
+        creates: "{{ molecule_ephemeral_directory }}/id_test"

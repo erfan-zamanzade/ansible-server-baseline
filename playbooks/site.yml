@@ -1,0 +1,22 @@
+---
+# Full server build. Order matters for safety: the firewall opens the SSH port
+# before sshd moves to it, and users with keys exist before passwords go off.
+- name: Baseline and hardening
+  hosts: all
+  become: true
+  roles:
+    - baseline
+    - firewall
+    - ssh_hardening
+    - fail2ban
+
+- name: Container host with the demo service
+  hosts: app_servers
+  become: true
+  roles:
+    - docker
+    - node_exporter
+    - app
+    - nginx
+    - backup
+    - healthcheck

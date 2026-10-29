@@ -1,0 +1,116 @@
+---
+- name: Install nginx
+  ansible.builtin.apt:
+    name: nginx
+    state: present
+
+- name: Read the nginx version
+  ansible.builtin.command: nginx -v
+  register: nginx_version_output
+  changed_when: false
+
+# `http2 on;` exists from 1.25.1; Ubuntu 24.04 ships 1.24, which needs the
+# older `listen ... http2` form.
+- name: Work out version-dependent settings
+  ansible.builtin.set_fact:
+    nginx_http2_directive: "{{ (nginx_version_output.stderr | regex_search('nginx/([0-9.]+)', '\\1') | first) is version('1.25.1', '>=') }}"
+
+- name: Remove the default site
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: Reload nginx
+
+- name: Create the TLS directory
+  ansible.builtin.file:
+    path: /etc/nginx/tls
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Install certificates
+  ansible.builtin.copy:
+    dest: "/etc/nginx/tls/{{ item.name }}.crt"
+    content: "{{ item.tls_certificate }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ nginx_sites }}"
+  loop_control:
+    label: "{{ item.name }}"
+  notify: Reload nginx
+
+- name: Install private keys
+  ansible.builtin.copy:
+    dest: "/etc/nginx/tls/{{ item.name }}.key"
+    content: "{{ item.tls_private_key }}"
+    owner: root
+    group: root
+    mode: "0600"
+  loop: "{{ nginx_sites }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+  notify: Reload nginx
+
+- name: Write nginx.conf
+  ansible.builtin.template:
+    src: nginx.conf.j2
+    dest: /etc/nginx/nginx.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload nginx
+
+- name: Write the shared settings
+  ansible.builtin.template:
+    src: baseline.conf.j2
+    dest: /etc/nginx/conf.d/00-baseline.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload nginx
+
+- name: Write the shared proxy settings
+  ansible.builtin.template:
+    src: proxy.conf.j2
+    dest: /etc/nginx/snippets/baseline-proxy.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload nginx
+
+- name: Write the site configurations
+  ansible.builtin.template:
+    src: site.conf.j2
+    dest: "/etc/nginx/sites-available/{{ item.name }}.conf"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ nginx_sites }}"
+  loop_control:
+    label: "{{ item.name }}"
+  notify: Reload nginx
+
+- name: Enable the sites
+  ansible.builtin.file:
+    src: "/etc/nginx/sites-available/{{ item.name }}.conf"
+    dest: "/etc/nginx/sites-enabled/{{ item.name }}.conf"
+    state: link
+  loop: "{{ nginx_sites }}"
+  loop_control:
+    label: "{{ item.name }}"
+  notify: Reload nginx
+
+# Fails the play before the reload handler runs, so a broken config never
+# reaches the running nginx.
+- name: Test the configuration
+  ansible.builtin.command: nginx -t
+  changed_when: false
+
+- name: Enable nginx
+  ansible.builtin.systemd_service:
+    name: nginx
+    enabled: true
+    state: started

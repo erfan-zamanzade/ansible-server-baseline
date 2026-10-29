@@ -1,0 +1,26 @@
+---
+argument_specs:
+  main:
+    short_description: restic backups with restore verification
+    options:
+      backup_restic_repository: {type: str}
+      backup_restic_password: {type: str, required: true, no_log: true}
+      backup_restic_env: {type: dict, no_log: true}
+      backup_paths: {type: list, elements: path}
+      backup_excludes: {type: list, elements: str}
+      backup_postgres:
+        type: list
+        elements: dict
+        options:
+          container: {type: str, required: true}
+          database: {type: str, required: true}
+          user: {type: str, required: true}
+          verify_sql: {type: str, default: "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public'"}
+          verify_min: {type: int, default: 1}
+      backup_keep_daily: {type: int}
+      backup_keep_weekly: {type: int}
+      backup_keep_monthly: {type: int}
+      backup_schedule: {type: str}
+      backup_verify_schedule: {type: str}
+      backup_verify_read_data_subset: {type: str}
+      backup_textfile_dir: {type: path}

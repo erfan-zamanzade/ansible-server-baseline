@@ -1,0 +1,17 @@
+# {{ ansible_managed }}
+[DEFAULT]
+backend = systemd
+banaction = nftables-multiport
+banaction_allports = nftables-allports
+bantime = {{ fail2ban_bantime }}
+findtime = {{ fail2ban_findtime }}
+maxretry = {{ fail2ban_maxretry }}
+bantime.increment = {{ fail2ban_bantime_increment | lower }}
+bantime.maxtime = {{ fail2ban_bantime_maxtime }}
+ignoreip = 127.0.0.1/8 ::1{% for ip in fail2ban_ignoreip %} {{ ip }}{% endfor %}
+
+
+[sshd]
+enabled = true
+port = {{ fail2ban_ssh_port }}
+mode = aggressive

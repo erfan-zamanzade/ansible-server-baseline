@@ -1,0 +1,7 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Server health check (publishes metrics for node_exporter)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/server-healthcheck --textfile

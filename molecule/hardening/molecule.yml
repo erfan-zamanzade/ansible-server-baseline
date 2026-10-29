@@ -1,0 +1,40 @@
+---
+# Baseline, firewall, SSH hardening and fail2ban on one distribution
+# (scripts/molecule.sh sets MOLECULE_DISTRO and MOLECULE_IMAGE).
+driver:
+  name: docker
+platforms:
+  - name: asb-hardening-${MOLECULE_DISTRO:-ubuntu2404}
+    image: ${MOLECULE_IMAGE:-ubuntu:24.04}
+    dockerfile: ../resources/Dockerfile.j2
+    pre_build_image: false
+    # systemd as PID 1 needs a writable cgroup tree; nftables needs
+    # NET_ADMIN. Everything the roles change stays inside the container.
+    privileged: true
+    cgroupns_mode: host
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    tmpfs:
+      - /run
+      - /run/lock
+    command: /lib/systemd/systemd
+    keep_volumes: false
+provisioner:
+  name: ansible
+  env:
+    ANSIBLE_ROLES_PATH: ${MOLECULE_PROJECT_DIRECTORY}/roles
+    ANSIBLE_COLLECTIONS_PATH: ${MOLECULE_PROJECT_DIRECTORY}/collections
+  config_options:
+    defaults:
+      callback_result_format: yaml
+      interpreter_python: auto_silent
+scenario:
+  test_sequence:
+    - destroy
+    - syntax
+    - create
+    - prepare
+    - converge
+    - idempotence
+    - verify
+    - destroy

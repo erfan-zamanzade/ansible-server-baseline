@@ -1,0 +1,72 @@
+---
+baseline_timezone: Etc/UTC
+
+baseline_packages:
+  - ca-certificates
+  - curl
+  - gnupg
+  - htop
+  - jq
+  - logrotate
+  - procps
+  - rsync
+  - sudo
+  - unzip
+
+# Admin accounts. Each gets the SSH group (see ssh_hardening) and, unless
+# `sudo: false`, passwordless sudo. Keys are managed exclusively: keys not
+# listed here are removed from the account.
+#   - name: erfan
+#     ssh_keys: ["ssh-ed25519 AAAA... erfan@laptop"]
+#     sudo: true
+baseline_admin_users: []
+baseline_ssh_group: ssh-users
+# Accounts to remove completely (for people who left the team).
+baseline_removed_users: []
+
+# Time synchronisation with chrony. Off in the container tests: a privileged
+# test container shares the host clock, and chrony there would steer it.
+baseline_time_sync: true
+baseline_ntp_sources:
+  - server time.cloudflare.com iburst nts
+  - pool 2.debian.pool.ntp.org iburst
+
+baseline_journald_max_use: 1G
+baseline_journald_max_retention: 1month
+
+baseline_unattended_upgrades: true
+baseline_unattended_reboot: false
+baseline_unattended_reboot_time: "04:30"
+# Extra origins for unattended-upgrades, e.g. the Docker repository:
+#   - "origin=Docker,label=Docker CE"
+baseline_unattended_extra_origins: []
+
+# Kernel and network hardening, written to /etc/sysctl.d/90-baseline.conf.
+baseline_sysctl_network:
+  net.ipv4.conf.all.rp_filter: 1
+  net.ipv4.conf.default.rp_filter: 1
+  net.ipv4.conf.all.accept_redirects: 0
+  net.ipv4.conf.default.accept_redirects: 0
+  net.ipv4.conf.all.send_redirects: 0
+  net.ipv4.conf.default.send_redirects: 0
+  net.ipv4.conf.all.accept_source_route: 0
+  net.ipv4.conf.all.log_martians: 1
+  net.ipv4.icmp_echo_ignore_broadcasts: 1
+  net.ipv4.tcp_syncookies: 1
+  net.ipv6.conf.all.accept_redirects: 0
+  net.ipv6.conf.default.accept_redirects: 0
+  net.ipv6.conf.all.accept_source_route: 0
+baseline_sysctl_kernel:
+  kernel.kptr_restrict: 2
+  kernel.dmesg_restrict: 1
+  kernel.yama.ptrace_scope: 1
+  kernel.unprivileged_bpf_disabled: 1
+  fs.protected_fifos: 2
+  fs.protected_regular: 2
+  fs.suid_dumpable: 0
+# The kernel.* and fs.* keys are global, not per network namespace. Inside a
+# container, applying them would change the host, so there they are only
+# written to the file and applied when the image runs on a real machine.
+baseline_sysctl_apply_kernel: >-
+  {{ ansible_facts['virtualization_role'] != 'guest'
+     or ansible_facts['virtualization_type'] not in ['docker', 'container', 'podman', 'lxc'] }}

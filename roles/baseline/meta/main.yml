@@ -1,0 +1,12 @@
+---
+galaxy_info:
+  author: Erfan Zamanzade
+  description: Base packages, admin users, sysctl hardening, journald limits, time sync and unattended upgrades
+  license: MIT
+  min_ansible_version: "2.18"
+  platforms:
+    - name: Debian
+      versions: [trixie]
+    - name: Ubuntu
+      versions: [noble, resolute]
+dependencies: []

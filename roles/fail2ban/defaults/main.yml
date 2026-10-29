@@ -1,0 +1,10 @@
+---
+fail2ban_ssh_port: "{{ ssh_hardening_port | default(22) }}"
+fail2ban_bantime: 1h
+fail2ban_findtime: 10m
+fail2ban_maxretry: 5
+# Repeat offenders get longer bans: 1h, 2h, 4h ... up to a week.
+fail2ban_bantime_increment: true
+fail2ban_bantime_maxtime: 1w
+# Never ban these (office, VPN, monitoring). Loopback is always ignored.
+fail2ban_ignoreip: []

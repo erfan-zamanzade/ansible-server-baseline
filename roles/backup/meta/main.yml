@@ -1,0 +1,12 @@
+---
+galaxy_info:
+  author: Erfan Zamanzade
+  description: restic backups of files and PostgreSQL with scheduled restore verification
+  license: MIT
+  min_ansible_version: "2.18"
+  platforms:
+    - name: Debian
+      versions: [trixie]
+    - name: Ubuntu
+      versions: [noble, resolute]
+dependencies: []

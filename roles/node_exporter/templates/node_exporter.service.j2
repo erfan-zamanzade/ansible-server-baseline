@@ -1,0 +1,52 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Prometheus node_exporter
+Documentation=https://github.com/prometheus/node_exporter
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=node-exp
+Group=node-exp
+ExecStart=/usr/local/bin/node_exporter \
+    --web.listen-address={{ node_exporter_listen_address }} \
+    --collector.textfile.directory={{ node_exporter_textfile_dir }} \
+    --collector.systemd \
+    --collector.systemd.unit-include='({{ node_exporter_systemd_units | map('replace', '.', '[.]') | join('|') }})'
+Restart=on-failure
+RestartSec=5
+
+# Sandbox: read-only view of the system, no privileges, no new processes
+# with more rights. `systemd-analyze security node_exporter` scores it.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=all
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RemoveIPC=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+# A blocked call fails with EPERM instead of killing the process (SIGSYS): the
+# tests caught a collector being killed on its first scrape with a stricter
+# filter.
+SystemCallErrorNumber=EPERM
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

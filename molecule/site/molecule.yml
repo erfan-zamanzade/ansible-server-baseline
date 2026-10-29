@@ -1,0 +1,79 @@
+---
+# The full site playbook (all roles and the demo service) on one distribution
+# (scripts/molecule.sh sets MOLECULE_DISTRO and MOLECULE_IMAGE).
+driver:
+  name: docker
+platforms:
+  - name: asb-site-${MOLECULE_DISTRO:-ubuntu2404}
+    image: ${MOLECULE_IMAGE:-ubuntu:24.04}
+    dockerfile: ../resources/Dockerfile.j2
+    pre_build_image: false
+    # systemd as PID 1 needs a writable cgroup tree; nftables needs
+    # NET_ADMIN. Everything the roles change stays inside the container.
+    privileged: true
+    cgroupns_mode: host
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+      # Docker inside the instance needs real filesystems for its image
+      # stores (overlayfs cannot sit on the container's own overlay).
+      - /var/lib/docker
+      - /var/lib/containerd
+    tmpfs:
+      - /run
+      - /run/lock
+    command: /lib/systemd/systemd
+    keep_volumes: false
+    groups:
+      - app_servers
+provisioner:
+  name: ansible
+  inventory:
+    group_vars:
+      all:
+        baseline_admin_users:
+          - name: erfan
+            ssh_keys:
+              - "{{ lookup('ansible.builtin.file', molecule_ephemeral_directory ~ '/id_test.pub') }}"
+        baseline_time_sync: false
+        # The Molecule host plays the Prometheus server.
+        firewall_monitoring_sources:
+          - "{{ ansible_facts['default_ipv4']['gateway'] }}"
+        app_db_password: molecule-only-db-password
+        nginx_sites:
+          - name: app
+            server_name: app.example.test
+            upstream: 127.0.0.1:8080
+            tls_certificate: "{{ lookup('ansible.builtin.file', molecule_ephemeral_directory ~ '/tls/app.crt') }}"
+            tls_private_key: "{{ lookup('ansible.builtin.file', molecule_ephemeral_directory ~ '/tls/app.key') }}"
+            internal_locations: [/metrics]
+        backup_restic_password: molecule-only-restic-password
+        backup_postgres:
+          - container: app-postgres-1
+            database: app
+            user: app
+            verify_sql: SELECT count(*) FROM migrations
+            verify_min: 3
+        healthcheck_http_checks:
+          - name: app
+            url: https://app.example.test/health
+        healthcheck_ca_file: /usr/local/share/ca-certificates/molecule-test-ca.crt
+        # The instance's filesystems are the Molecule host's disk, which the
+        # tests do not control.
+        healthcheck_disk_max_percent: 98
+  env:
+    ANSIBLE_ROLES_PATH: ${MOLECULE_PROJECT_DIRECTORY}/roles
+    ANSIBLE_COLLECTIONS_PATH: ${MOLECULE_PROJECT_DIRECTORY}/collections
+  config_options:
+    defaults:
+      callback_result_format: yaml
+      interpreter_python: auto_silent
+scenario:
+  test_sequence:
+    - destroy
+    - syntax
+    - create
+    - prepare
+    - converge
+    - idempotence
+    - verify
+    - destroy

@@ -1,0 +1,10 @@
+---
+argument_specs:
+  main:
+    short_description: Prometheus node_exporter
+    options:
+      node_exporter_version: {type: str}
+      node_exporter_checksums: {type: dict}
+      node_exporter_listen_address: {type: str}
+      node_exporter_textfile_dir: {type: path}
+      node_exporter_systemd_units: {type: list, elements: str}

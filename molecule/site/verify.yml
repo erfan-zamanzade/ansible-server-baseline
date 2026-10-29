@@ -1,0 +1,287 @@
+---
+- name: Verify
+  hosts: all
+  gather_facts: true
+  vars:
+    instance_ip: "{{ ansible_facts['default_ipv4']['address'] }}"
+    curl: >-
+      curl --silent --show-error --max-time 10
+      --cacert {{ molecule_ephemeral_directory }}/tls/ca.crt
+      --resolve app.example.test:443:{{ instance_ip }}
+      --resolve app.example.test:80:{{ instance_ip }}
+    psql: docker exec app-postgres-1 psql --username=app --dbname=app --no-psqlrc --tuples-only --no-align --command
+  tasks:
+    # --- the application through nginx, from outside --------------------------
+    - name: Call /health over verified TLS
+      ansible.builtin.command: "{{ curl }} https://app.example.test/health"
+      delegate_to: localhost
+      register: health
+      changed_when: false
+      failed_when: (health.stdout | from_json).status != 'ok'
+
+    - name: Call / for the deployed version
+      ansible.builtin.command: "{{ curl }} https://app.example.test/"
+      delegate_to: localhost
+      register: info
+      changed_when: false
+      failed_when: (info.stdout | from_json).version != '1.0.1'
+
+    - name: Read the response headers
+      ansible.builtin.command: "{{ curl }} --head https://app.example.test/health"
+      delegate_to: localhost
+      register: headers
+      changed_when: false
+
+    - name: Check security headers and that nginx hides its version
+      ansible.builtin.assert:
+        that:
+          - "headers.stdout is search('(?im)^strict-transport-security: max-age=31536000')"
+          - "headers.stdout is search('(?im)^x-content-type-options: nosniff')"
+          - "headers.stdout is search('(?im)^x-frame-options: DENY')"
+          - "headers.stdout is search('(?im)^server: nginx\\s*$')"
+        quiet: true
+
+    - name: Dump the effective nginx configuration
+      ansible.builtin.command: nginx -T
+      register: nginx_effective
+      changed_when: false
+
+    - name: Check only TLS 1.2 and 1.3 are enabled
+      ansible.builtin.assert:
+        that:
+          - nginx_effective.stdout is search('ssl_protocols TLSv1.2 TLSv1.3;')
+          - nginx_effective.stdout is not search('ssl_protocols[^;]*TLSv1(\\.1)?[ ;]')
+        quiet: true
+
+    - name: Request plain HTTP
+      ansible.builtin.command: "{{ curl }} --output /dev/null --write-out '%{http_code} %{redirect_url}' http://app.example.test/health"
+      delegate_to: localhost
+      register: plain_http
+      changed_when: false
+      failed_when: plain_http.stdout != '301 https://app.example.test/health'
+
+    - name: Request /metrics from outside
+      ansible.builtin.command: "{{ curl }} --output /dev/null --write-out '%{http_code}' https://app.example.test/metrics"
+      delegate_to: localhost
+      register: metrics_outside
+      changed_when: false
+      failed_when: metrics_outside.stdout != '403'
+
+    - name: Request /metrics from the server itself  # noqa: command-instead-of-module (needs --resolve)
+      ansible.builtin.command: >-
+        curl --silent --fail --max-time 10 --resolve app.example.test:443:127.0.0.1
+        --cacert /usr/local/share/ca-certificates/molecule-test-ca.crt https://app.example.test/metrics
+      register: metrics_inside
+      changed_when: false
+      failed_when: "'app_info' not in metrics_inside.stdout"
+
+    - name: Connect with an unknown host name  # noqa: command-instead-of-module (needs --resolve)
+      ansible.builtin.command: >-
+        curl --silent --max-time 10 --insecure --resolve other.example.test:443:{{ instance_ip }}
+        https://other.example.test/
+      delegate_to: localhost
+      register: unknown_host
+      changed_when: false
+      # nginx refuses the TLS handshake for names it does not serve.
+      failed_when: unknown_host.rc == 0
+
+    # --- exposure ---------------------------------------------------------------
+    - name: List TCP listeners
+      ansible.builtin.command: ss --tcp --listening --numeric --no-header
+      register: listeners
+      changed_when: false
+
+    - name: Check the app and Docker metrics listen on localhost only
+      ansible.builtin.assert:
+        that:
+          - listeners.stdout is search('127\.0\.0\.1:8080\s')
+          - listeners.stdout is not search('(0\.0\.0\.0|\*|\[::\]):8080\s')
+          - listeners.stdout is search('127\.0\.0\.1:9323\s')
+        quiet: true
+
+    - name: Check what the firewall lets through
+      ansible.builtin.include_tasks: ../resources/tasks/probe-ports.yml
+      vars:
+        expected_ports:
+          "22": open
+          "80": open
+          "443": open
+          "9100": open       # the Molecule host is the monitoring source
+          "8080": filtered   # app, localhost only
+          "9323": filtered   # dockerd metrics, localhost only
+          "5432": filtered
+
+    # --- Docker -----------------------------------------------------------------
+    - name: Read the Docker daemon settings
+      ansible.builtin.command: docker info --format '{{ '{{' }}json .{{ '}}' }}'
+      register: docker_info
+      changed_when: false
+
+    - name: Check live restore and log rotation
+      ansible.builtin.assert:
+        that:
+          - (docker_info.stdout | from_json).LiveRestoreEnabled
+          - (docker_info.stdout | from_json).LoggingDriver == 'local'
+        quiet: true
+
+    # --- node_exporter ----------------------------------------------------------
+    - name: Scrape node_exporter from the Molecule host
+      ansible.builtin.uri:
+        url: http://{{ instance_ip }}:9100/metrics
+        return_content: true
+      delegate_to: localhost
+      register: node_metrics
+
+    - name: Check systemd unit states are exported
+      ansible.builtin.assert:
+        that:
+          - node_metrics.content is search('node_systemd_unit_state\{name="nginx.service",state="active",type="[a-z]+"\} 1')
+          - node_metrics.content is search('node_systemd_unit_state\{name="docker.service",state="active",type="[a-z]+"\} 1')
+        quiet: true
+
+    - name: Score the node_exporter sandbox
+      ansible.builtin.command: systemd-analyze security --no-pager node_exporter.service
+      register: sandbox
+      changed_when: false
+
+    - name: Show the sandbox score
+      ansible.builtin.debug:
+        msg: "{{ sandbox.stdout_lines | last }}"
+
+    # --- backup and restore drill -------------------------------------------------
+    - name: Write a marker row the backup must bring back
+      ansible.builtin.command: >-
+        {{ psql }} "CREATE TABLE IF NOT EXISTS restore_drill (marker text);
+        TRUNCATE restore_drill; INSERT INTO restore_drill VALUES ('{{ drill_marker }}');"
+      vars:
+        drill_marker: "{{ 999999999999 | random(seed=inventory_hostname ~ ansible_facts['date_time']['epoch']) }}"
+      register: marker_insert
+      changed_when: true
+
+    - name: Remember the marker
+      ansible.builtin.command: "{{ psql }} 'SELECT marker FROM restore_drill'"
+      register: marker
+      changed_when: false
+
+    - name: Run the backup service
+      ansible.builtin.systemd_service:
+        name: backup.service
+        state: started
+      changed_when: false
+
+    - name: Run the restore verification service
+      ansible.builtin.systemd_service:
+        name: backup-verify.service
+        state: started
+      changed_when: false
+
+    - name: Read the backup metrics through node_exporter
+      ansible.builtin.uri:
+        url: http://127.0.0.1:9100/metrics
+        return_content: true
+      register: backup_metrics
+
+    - name: Check both jobs reported success
+      ansible.builtin.assert:
+        that:
+          - backup_metrics.content is search('(?m)^backup_last_run_success 1$')
+          - backup_metrics.content is search('(?m)^backup_restore_verify_last_run_success 1$')
+          - backup_metrics.content is search('(?m)^backup_restore_verify_databases 1$')
+        fail_msg: "{{ backup_metrics.content.splitlines() | select('match', '^backup_') | list }}"
+
+    - name: Show what the verification did
+      ansible.builtin.command: journalctl --unit backup-verify.service --output cat --no-pager --since -10min
+      register: verify_log
+      changed_when: false
+
+    - name: Print the verification log
+      ansible.builtin.debug:
+        var: verify_log.stdout_lines
+
+    - name: "Disaster: delete the database volume"
+      ansible.builtin.shell:
+        executable: /bin/bash
+        chdir: /srv/app
+        cmd: |
+          set -euo pipefail
+          docker compose stop app postgres
+          docker compose rm --force postgres
+          docker volume rm app_postgres-data
+          docker compose up --detach --wait
+      changed_when: true
+
+    - name: Check the marker is gone (fresh, empty database)
+      ansible.builtin.command: "{{ psql }} \"SELECT to_regclass('public.restore_drill') IS NULL\""
+      register: marker_gone
+      changed_when: false
+      failed_when: marker_gone.stdout != 't'
+
+    - name: Restore the database from the latest backup
+      ansible.builtin.command: backup-restore-db app-postgres-1 app --yes
+      register: restore
+      changed_when: true
+
+    - name: Read the marker after the restore
+      ansible.builtin.command: "{{ psql }} 'SELECT marker FROM restore_drill'"
+      register: marker_after
+      changed_when: false
+      failed_when: marker_after.stdout != marker.stdout
+
+    - name: Check the app is ready on the restored database
+      ansible.builtin.command: "{{ curl }} https://app.example.test/ready"
+      delegate_to: localhost
+      register: ready
+      changed_when: false
+      failed_when: (ready.stdout | from_json).status != 'ok'
+
+    - name: Refuse a restore without --yes
+      ansible.builtin.command: backup-restore-db app-postgres-1 app
+      register: unconfirmed
+      changed_when: false
+      failed_when: unconfirmed.rc == 0
+
+    # --- health check -------------------------------------------------------------
+    - name: Run the health check
+      ansible.builtin.command: server-healthcheck
+      register: healthy
+      changed_when: false
+
+    - name: Print the health report
+      ansible.builtin.debug:
+        var: healthy.stdout_lines
+
+    - name: "Drill: stop nginx"
+      ansible.builtin.systemd_service:
+        name: nginx
+        state: stopped
+      changed_when: false
+
+    - name: Run the health check with nginx down
+      ansible.builtin.command: server-healthcheck
+      register: unhealthy
+      changed_when: false
+      failed_when: >-
+        unhealthy.rc != 1
+        or unhealthy.stdout is not search('(?m)^FAIL\s+service:nginx')
+        or unhealthy.stdout is not search('(?m)^FAIL\s+http:app')
+
+    - name: Publish the failing result as metrics
+      ansible.builtin.command: server-healthcheck --textfile
+      changed_when: false
+
+    - name: Read the health metrics
+      ansible.builtin.uri:
+        url: http://127.0.0.1:9100/metrics
+        return_content: true
+      register: health_metrics
+      failed_when: health_metrics.content is not search('server_healthcheck_status\{check="service:nginx"\} 0')
+
+    - name: Start nginx again
+      ansible.builtin.systemd_service:
+        name: nginx
+        state: started
+      changed_when: false
+
+    - name: Run the health check after recovery
+      ansible.builtin.command: server-healthcheck
+      changed_when: false

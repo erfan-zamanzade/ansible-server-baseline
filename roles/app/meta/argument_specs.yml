@@ -1,0 +1,15 @@
+---
+argument_specs:
+  main:
+    short_description: Demo application stack
+    options:
+      app_dir: {type: path}
+      app_project_name: {type: str}
+      app_image: {type: str}
+      app_version: {type: str}
+      app_listen: {type: str}
+      app_postgres_image: {type: str}
+      app_redis_image: {type: str}
+      app_db_name: {type: str}
+      app_db_user: {type: str}
+      app_db_password: {type: str, required: true, no_log: true}

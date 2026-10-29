@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# Prove the latest backup can be restored:
+#   1. read back a share of the repository data (restic check --read-data-subset),
+#   2. restore the latest snapshot into scratch space, verifying file hashes,
+#   3. load every database dump into a throwaway PostgreSQL container (same
+#      image as production, no network) and run its verification query.
+# Publishes backup_restore_verify_* metrics for node_exporter.
+set -euo pipefail
+# shellcheck source=roles/backup/files/backup-common.sh
+source /usr/local/lib/server-baseline/backup-common.sh
+
+started="$(date +%s)"
+scratch="$(mktemp -d /var/tmp/backup-verify.XXXXXX)"
+verify_container=""
+restored_files=0
+verified_databases=0
+
+finish() {
+  local rc=$? now last_success
+  now="$(date +%s)"
+  [[ -n "$verify_container" ]] && docker rm -f "$verify_container" >/dev/null 2>&1
+  rm -rf "$scratch"
+  last_success="$(previous_metric backup_restore_verify_last_success_timestamp_seconds backup-verify)"
+  [[ $rc -eq 0 ]] && last_success="$now"
+  write_metrics backup-verify <<METRICS
+# HELP backup_restore_verify_last_run_success 1 if the last restore verification passed.
+# TYPE backup_restore_verify_last_run_success gauge
+backup_restore_verify_last_run_success $([[ $rc -eq 0 ]] && echo 1 || echo 0)
+# HELP backup_restore_verify_last_success_timestamp_seconds When a restore was last verified.
+# TYPE backup_restore_verify_last_success_timestamp_seconds gauge
+backup_restore_verify_last_success_timestamp_seconds $last_success
+# HELP backup_restore_verify_duration_seconds Duration of the last verification.
+# TYPE backup_restore_verify_duration_seconds gauge
+backup_restore_verify_duration_seconds $((now - started))
+# HELP backup_restore_verify_files Files restored from the latest snapshot.
+# TYPE backup_restore_verify_files gauge
+backup_restore_verify_files $restored_files
+# HELP backup_restore_verify_databases Databases restored and checked.
+# TYPE backup_restore_verify_databases gauge
+backup_restore_verify_databases $verified_databases
+METRICS
+  if [[ $rc -eq 0 ]]; then log "restore verification passed in $((now - started))s"; else log "restore verification FAILED (exit $rc)"; fi
+}
+trap finish EXIT
+
+log "reading back $BACKUP_VERIFY_READ_DATA_SUBSET of the repository data"
+restic check --quiet --read-data-subset="$BACKUP_VERIFY_READ_DATA_SUBSET"
+
+log "restoring the latest snapshot into $scratch"
+restic restore latest --quiet --tag scheduled --host "$(hostname)" --target "$scratch/files" --verify
+restored_files="$(find "$scratch/files" -type f | wc -l)"
+[[ "$restored_files" -gt 0 ]] || die "the snapshot restored no files"
+log "restored $restored_files files"
+
+for entry in "${BACKUP_POSTGRES[@]}"; do
+  split_pg_entry "$entry"
+  dump="$scratch/files/var/backups/staging/$PG_CONTAINER--$PG_DATABASE.dump"
+  [[ -s "$dump" ]] || die "no dump of $PG_DATABASE in the snapshot"
+
+  image="$(docker inspect --format '{{.Config.Image}}' "$PG_CONTAINER")"
+  verify_container="backup-verify-$$"
+  log "loading $PG_DATABASE into a scratch $image container"
+  docker run --detach --rm --name "$verify_container" --network none \
+    --env POSTGRES_HOST_AUTH_METHOD=trust "$image" >/dev/null
+  for _ in $(seq 60); do
+    docker exec "$verify_container" pg_isready --username=postgres --quiet && break
+    sleep 1
+  done
+  # The entrypoint restarts the server once after initdb; wait for that too.
+  sleep 3
+  docker exec "$verify_container" pg_isready --username=postgres --quiet || die "scratch PostgreSQL did not start"
+
+  docker exec "$verify_container" createdb --username=postgres verify
+  docker exec -i "$verify_container" pg_restore --username=postgres --dbname=verify \
+    --no-owner --exit-on-error <"$dump"
+  result="$(docker exec "$verify_container" psql --username=postgres --dbname=verify \
+    --no-psqlrc --tuples-only --no-align --command="$PG_VERIFY_SQL")"
+  [[ "$result" =~ ^[0-9]+$ && "$result" -ge "$PG_VERIFY_MIN" ]] \
+    || die "$PG_DATABASE: '$PG_VERIFY_SQL' returned '$result', expected at least $PG_VERIFY_MIN"
+  log "$PG_DATABASE restored: '$PG_VERIFY_SQL' = $result"
+
+  docker rm -f "$verify_container" >/dev/null
+  verify_container=""
+  verified_databases=$((verified_databases + 1))
+done

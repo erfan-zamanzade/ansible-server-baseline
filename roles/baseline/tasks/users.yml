@@ -1,0 +1,43 @@
+---
+- name: Create the SSH login group
+  ansible.builtin.group:
+    name: "{{ baseline_ssh_group }}"
+    system: true
+
+- name: Create admin users
+  ansible.builtin.user:
+    name: "{{ item.name }}"
+    shell: "{{ item.shell | default('/bin/bash') }}"
+    groups: "{{ [baseline_ssh_group] + (['sudo'] if item.sudo | default(true) else []) }}"
+    append: true
+    # A locked password: these accounts log in with SSH keys only.
+    password: "!"
+    update_password: on_create
+  loop: "{{ baseline_admin_users }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Install authorised SSH keys (exclusive)
+  ansible.posix.authorized_key:
+    user: "{{ item.name }}"
+    key: "{{ item.ssh_keys | join('\n') }}"
+    exclusive: true
+  loop: "{{ baseline_admin_users }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Allow passwordless sudo for admins
+  ansible.builtin.template:
+    src: sudoers.j2
+    dest: /etc/sudoers.d/90-baseline-admins
+    owner: root
+    group: root
+    mode: "0440"
+    validate: /usr/sbin/visudo -cf %s
+
+- name: Remove accounts of people who left
+  ansible.builtin.user:
+    name: "{{ item }}"
+    state: absent
+    remove: true
+  loop: "{{ baseline_removed_users }}"

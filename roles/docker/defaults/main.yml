@@ -1,0 +1,26 @@
+---
+# Docker CE from download.docker.com. The signing key is checked against
+# Docker's published fingerprint before apt trusts it.
+docker_apt_key_url: "https://download.docker.com/linux/{{ ansible_facts['distribution'] | lower }}/gpg"
+docker_apt_key_fingerprint: 9DC858229FC7DD38854AE2D88D81803C0EBFCD88
+docker_packages:
+  - docker-ce
+  - docker-ce-cli
+  - containerd.io
+  - docker-buildx-plugin
+  - docker-compose-plugin
+
+# Membership of the docker group is equivalent to root. Keep it short.
+docker_users: []
+
+docker_log_max_size: 20m
+docker_log_max_file: 5
+# Containers keep running while dockerd restarts (upgrades, config changes).
+docker_live_restore: true
+# `-p 8080:8080` without an address binds here instead of 0.0.0.0, so a
+# forgotten address cannot bypass the host firewall.
+docker_default_bind_ip: 127.0.0.1
+# Address for the daemon's Prometheus endpoint; empty disables it.
+docker_metrics_addr: 127.0.0.1:9323
+# Extra keys merged into daemon.json.
+docker_daemon_options: {}

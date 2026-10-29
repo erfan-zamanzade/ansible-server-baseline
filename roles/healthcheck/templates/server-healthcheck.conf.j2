@@ -1,0 +1,12 @@
+# {{ ansible_managed }}
+# shellcheck shell=bash disable=SC2034
+HC_DISK_MAX_PERCENT={{ healthcheck_disk_max_percent }}
+HC_MEMORY_MIN_AVAILABLE_PERCENT={{ healthcheck_memory_min_available_percent }}
+HC_SERVICES=({{ healthcheck_services | map('quote') | join(' ') }})
+# name|url
+HC_HTTP_CHECKS=({% for c in healthcheck_http_checks %}{{ (c.name ~ '|' ~ c.url) | quote }} {% endfor %})
+HC_CA_FILE={{ healthcheck_ca_file | quote }}
+HC_TLS_MIN_DAYS={{ healthcheck_tls_min_days }}
+HC_TLS_CERTS=(/etc/nginx/tls/*.crt)
+HC_BACKUP_MAX_AGE_HOURS={{ healthcheck_backup_max_age_hours }}
+HC_TEXTFILE_DIR={{ healthcheck_textfile_dir | quote }}

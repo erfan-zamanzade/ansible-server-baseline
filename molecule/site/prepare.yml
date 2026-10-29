@@ -1,0 +1,44 @@
+---
+- name: Create test credentials on the Molecule host
+  hosts: localhost
+  gather_facts: false
+  vars:
+    tls_dir: "{{ molecule_ephemeral_directory }}/tls"
+  tasks:
+    - name: Generate the SSH key pair
+      ansible.builtin.command:
+        cmd: ssh-keygen -q -t ed25519 -N "" -C molecule-test -f {{ molecule_ephemeral_directory }}/id_test
+        creates: "{{ molecule_ephemeral_directory }}/id_test"
+
+    - name: Create the TLS directory
+      ansible.builtin.file:
+        path: "{{ tls_dir }}"
+        state: directory
+        mode: "0700"
+
+    # A throwaway CA and a certificate for app.example.test, so the tests can
+    # verify TLS properly (curl --cacert) instead of using --insecure.
+    - name: Create a test CA and server certificate
+      ansible.builtin.shell:
+        executable: /bin/bash
+        chdir: "{{ tls_dir }}"
+        creates: "{{ tls_dir }}/app.crt"
+        cmd: |
+          set -euo pipefail
+          openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 30 \
+            -subj "/CN=molecule test CA" -keyout ca.key -out ca.crt 2>/dev/null
+          openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
+            -subj "/CN=app.example.test" -keyout app.key -out app.csr 2>/dev/null
+          openssl x509 -req -in app.csr -CA ca.crt -CAkey ca.key -CAcreateserial -days 30 \
+            -extfile <(printf 'subjectAltName=DNS:app.example.test\nextendedKeyUsage=serverAuth') \
+            -out app.crt 2>/dev/null
+
+- name: Trust the test CA on the instance (for the local health check)
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Install the test CA certificate
+      ansible.builtin.copy:
+        src: "{{ molecule_ephemeral_directory }}/tls/ca.crt"
+        dest: /usr/local/share/ca-certificates/molecule-test-ca.crt
+        mode: "0644"

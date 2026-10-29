@@ -1,0 +1,16 @@
+# {{ ansible_managed }}
+# Sourced by backup-run, backup-verify and backup-restore-db.
+# shellcheck shell=bash disable=SC2034
+BACKUP_PATHS=({% for p in backup_paths %}{{ p | quote }} {% endfor %})
+BACKUP_EXCLUDES=({% for p in backup_excludes %}{{ p | quote }} {% endfor %})
+# container|database|user|verify_sql|verify_min
+BACKUP_POSTGRES=(
+{% for db in backup_postgres %}
+  {{ (db.container ~ '|' ~ db.database ~ '|' ~ db.user ~ '|' ~ (db.verify_sql | default("SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public'")) ~ '|' ~ (db.verify_min | default(1))) | quote }}
+{% endfor %}
+)
+BACKUP_KEEP_DAILY={{ backup_keep_daily }}
+BACKUP_KEEP_WEEKLY={{ backup_keep_weekly }}
+BACKUP_KEEP_MONTHLY={{ backup_keep_monthly }}
+BACKUP_VERIFY_READ_DATA_SUBSET={{ backup_verify_read_data_subset | quote }}
+BACKUP_TEXTFILE_DIR={{ backup_textfile_dir | quote }}

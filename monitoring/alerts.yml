@@ -1,0 +1,67 @@
+# Prometheus alert rules for the metrics this repository's roles publish
+# through node_exporter's textfile collector. Load them into any Prometheus
+# that scrapes node_exporter (job="node" below; adjust to your setup).
+---
+groups:
+  - name: server-baseline
+    rules:
+      - alert: BackupFailed
+        expr: backup_last_run_success == 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "Last backup on {{ $labels.instance }} failed"
+          description: "Check `journalctl -u backup.service` on the host."
+
+      - alert: BackupTooOld
+        expr: time() - backup_last_success_timestamp_seconds > 26 * 3600
+        labels:
+          severity: critical
+        annotations:
+          summary: "No successful backup on {{ $labels.instance }} for over 26 hours"
+
+      - alert: BackupMetricsMissing
+        expr: up{job="node"} == 1 unless on (instance) backup_last_run_timestamp_seconds
+        for: 26h
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.instance }} has never reported a backup run"
+
+      - alert: RestoreVerificationFailed
+        expr: backup_restore_verify_last_run_success == 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "Restore verification on {{ $labels.instance }} failed: the backups may not be restorable"
+          description: "Check `journalctl -u backup-verify.service` on the host."
+
+      - alert: RestoreVerificationTooOld
+        expr: time() - backup_restore_verify_last_success_timestamp_seconds > 8 * 86400
+        labels:
+          severity: warning
+        annotations:
+          summary: "No verified restore on {{ $labels.instance }} for over 8 days"
+
+      - alert: HealthCheckFailing
+        expr: server_healthcheck_status == 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Health check {{ $labels.check }} failing on {{ $labels.instance }}"
+
+      - alert: HealthCheckStale
+        expr: time() - server_healthcheck_last_run_timestamp_seconds > 900
+        labels:
+          severity: warning
+        annotations:
+          summary: "The health check on {{ $labels.instance }} has not run for 15 minutes"
+
+      - alert: SystemdUnitFailed
+        expr: node_systemd_unit_state{state="failed"} == 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.name }} failed on {{ $labels.instance }}"

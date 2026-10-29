@@ -1,0 +1,22 @@
+---
+# Inbound policy is drop; everything below is an explicit allow.
+firewall_ssh_port: "{{ ssh_hardening_port | default(22) }}"
+# Sources allowed to reach SSH. Empty means any address (fail2ban still
+# applies). Use your office/VPN ranges where you can.
+firewall_ssh_sources: []  # IPv4 addresses or CIDRs
+
+firewall_public_tcp_ports:
+  - 80
+  - 443
+
+# Ports reachable only from the monitoring network, e.g. node_exporter.
+firewall_monitoring_tcp_ports:
+  - 9100
+firewall_monitoring_sources: []  # IPv4 addresses or CIDRs
+
+# Extra raw nftables rules for the input chain, e.g.
+#   - "ip saddr 10.0.0.0/8 tcp dport 5432 accept"
+firewall_extra_input_rules: []
+
+# Log dropped packets (rate limited).
+firewall_log_drops: true

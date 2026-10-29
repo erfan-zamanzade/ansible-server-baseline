@@ -1,0 +1,12 @@
+---
+argument_specs:
+  main:
+    short_description: nftables input firewall
+    options:
+      firewall_ssh_port: {type: int}
+      firewall_ssh_sources: {type: list, elements: str}
+      firewall_public_tcp_ports: {type: list, elements: int}
+      firewall_monitoring_tcp_ports: {type: list, elements: int}
+      firewall_monitoring_sources: {type: list, elements: str}
+      firewall_extra_input_rules: {type: list, elements: str}
+      firewall_log_drops: {type: bool, default: true}

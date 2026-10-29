@@ -1,0 +1,21 @@
+---
+healthcheck_disk_max_percent: 85
+healthcheck_memory_min_available_percent: 10
+healthcheck_services:
+  - ssh
+  - nftables
+  - fail2ban
+  - docker
+  - nginx
+  - node_exporter
+# HTTPS endpoints checked through the local nginx (resolved to 127.0.0.1):
+#   - name: app
+#     url: https://app.example.com/health
+healthcheck_http_checks: []
+# CA bundle for the HTTP checks; empty uses the system trust store.
+healthcheck_ca_file: ""
+healthcheck_tls_min_days: 14
+# Fail when the last successful backup is older than this; 0 disables.
+healthcheck_backup_max_age_hours: 26
+healthcheck_schedule: "*:0/5"
+healthcheck_textfile_dir: "{{ node_exporter_textfile_dir | default('/var/lib/node_exporter/textfile') }}"

@@ -1,0 +1,28 @@
+---
+argument_specs:
+  main:
+    short_description: Base configuration for Debian and Ubuntu servers
+    options:
+      baseline_timezone: {type: str, default: Etc/UTC}
+      baseline_packages: {type: list, elements: str}
+      baseline_admin_users:
+        type: list
+        elements: dict
+        options:
+          name: {type: str, required: true}
+          ssh_keys: {type: list, elements: str, required: true}
+          sudo: {type: bool, default: true}
+          shell: {type: str, default: /bin/bash}
+      baseline_ssh_group: {type: str, default: ssh-users}
+      baseline_removed_users: {type: list, elements: str}
+      baseline_time_sync: {type: bool, default: true}
+      baseline_ntp_sources: {type: list, elements: str}
+      baseline_journald_max_use: {type: str}
+      baseline_journald_max_retention: {type: str}
+      baseline_unattended_upgrades: {type: bool, default: true}
+      baseline_unattended_reboot: {type: bool, default: false}
+      baseline_unattended_reboot_time: {type: str}
+      baseline_unattended_extra_origins: {type: list, elements: str}
+      baseline_sysctl_network: {type: dict}
+      baseline_sysctl_kernel: {type: dict}
+      baseline_sysctl_apply_kernel: {type: bool}

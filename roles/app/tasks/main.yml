@@ -1,0 +1,37 @@
+---
+- name: Create the application directory
+  ansible.builtin.file:
+    path: "{{ app_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Write the secrets file
+  ansible.builtin.copy:
+    dest: "{{ app_dir }}/.env"
+    content: |
+      # Managed by Ansible (app role).
+      DB_PASSWORD={{ app_db_password }}
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+
+- name: Write the Compose file
+  ansible.builtin.template:
+    src: compose.yaml.j2
+    dest: "{{ app_dir }}/compose.yaml"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Start the stack
+  community.docker.docker_compose_v2:
+    project_src: "{{ app_dir }}"
+    project_name: "{{ app_project_name }}"
+    state: present
+    pull: missing
+    remove_orphans: true
+    wait: true
+    wait_timeout: 300

@@ -1,0 +1,10 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Run the server health check every few minutes
+
+[Timer]
+OnCalendar={{ healthcheck_schedule }}
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

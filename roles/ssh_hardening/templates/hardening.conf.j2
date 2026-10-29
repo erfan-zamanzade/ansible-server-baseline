@@ -1,0 +1,28 @@
+# {{ ansible_managed }}
+Port {{ ssh_hardening_port }}
+
+PermitRootLogin no
+PubkeyAuthentication yes
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitEmptyPasswords no
+AuthenticationMethods publickey
+AllowGroups {{ ssh_hardening_allow_groups | join(' ') }}
+
+MaxAuthTries {{ ssh_hardening_max_auth_tries }}
+LoginGraceTime 30
+ClientAliveInterval {{ ssh_hardening_client_alive_interval }}
+ClientAliveCountMax {{ ssh_hardening_client_alive_count_max }}
+
+X11Forwarding no
+AllowAgentForwarding no
+AllowTcpForwarding {{ 'yes' if ssh_hardening_allow_tcp_forwarding else 'no' }}
+PermitTunnel no
+UseDNS no
+# VERBOSE logs the fingerprint of the key used for each login.
+LogLevel VERBOSE
+
+{% set pq = ['mlkem768x25519-sha256'] if ssh_hardening_openssh_version is version('9.9', '>=') else [] %}
+KexAlgorithms {{ (pq + ssh_hardening_kex_algorithms) | join(',') }}
+Ciphers {{ ssh_hardening_ciphers | join(',') }}
+MACs {{ ssh_hardening_macs | join(',') }}

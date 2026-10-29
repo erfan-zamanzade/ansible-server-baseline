@@ -1,0 +1,136 @@
+---
+rule_files:
+  - ../alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  - name: a failed backup alerts immediately
+    interval: 1m
+    input_series:
+      - series: 'backup_last_run_success{instance="app-1:9100", job="node"}'
+        values: "1 1 0"
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: BackupFailed
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: BackupFailed
+        exp_alerts:
+          - exp_labels: {severity: critical, instance: "app-1:9100", job: node}
+            exp_annotations:
+              summary: "Last backup on app-1:9100 failed"
+              description: "Check `journalctl -u backup.service` on the host."
+
+  - name: a backup older than 26 hours alerts
+    interval: 1h
+    input_series:
+      # Last success at t=0 (timestamp 0) and never again.
+      - series: 'backup_last_success_timestamp_seconds{instance="app-1:9100", job="node"}'
+        values: "0x30"
+    alert_rule_test:
+      - eval_time: 26h
+        alertname: BackupTooOld
+        exp_alerts: []
+      - eval_time: 27h
+        alertname: BackupTooOld
+        exp_alerts:
+          - exp_labels: {severity: critical, instance: "app-1:9100", job: node}
+            exp_annotations:
+              summary: "No successful backup on app-1:9100 for over 26 hours"
+
+  - name: a host that never reports backups alerts after 26 hours
+    # One-minute samples: with sparse samples the series goes stale between
+    # them and the 26h `for` would keep restarting.
+    interval: 1m
+    input_series:
+      - series: 'up{instance="app-1:9100", job="node"}'
+        values: "1x1700"
+      - series: 'up{instance="app-2:9100", job="node"}'
+        values: "1x1700"
+      - series: 'backup_last_run_timestamp_seconds{instance="app-2:9100", job="node"}'
+        values: "0x1700"
+    alert_rule_test:
+      - eval_time: 27h
+        alertname: BackupMetricsMissing
+        exp_alerts:
+          - exp_labels: {severity: warning, instance: "app-1:9100", job: node}
+            exp_annotations:
+              summary: "app-1:9100 has never reported a backup run"
+
+  - name: a failed restore verification alerts
+    interval: 1m
+    input_series:
+      - series: 'backup_restore_verify_last_run_success{instance="app-1:9100", job="node"}'
+        values: "0"
+    alert_rule_test:
+      - eval_time: 0m
+        alertname: RestoreVerificationFailed
+        exp_alerts:
+          - exp_labels: {severity: critical, instance: "app-1:9100", job: node}
+            exp_annotations:
+              summary: "Restore verification on app-1:9100 failed: the backups may not be restorable"
+              description: "Check `journalctl -u backup-verify.service` on the host."
+
+  - name: restore verification older than 8 days alerts
+    interval: 1d
+    input_series:
+      - series: 'backup_restore_verify_last_success_timestamp_seconds{instance="app-1:9100", job="node"}'
+        values: "0x10"
+    alert_rule_test:
+      - eval_time: 8d
+        alertname: RestoreVerificationTooOld
+        exp_alerts: []
+      - eval_time: 9d
+        alertname: RestoreVerificationTooOld
+        exp_alerts:
+          - exp_labels: {severity: warning, instance: "app-1:9100", job: node}
+            exp_annotations:
+              summary: "No verified restore on app-1:9100 for over 8 days"
+
+  - name: a failing health check alerts after 10 minutes, a passing one never
+    interval: 1m
+    input_series:
+      - series: 'server_healthcheck_status{check="service:nginx", instance="app-1:9100", job="node"}'
+        values: "0x15"
+      - series: 'server_healthcheck_status{check="memory", instance="app-1:9100", job="node"}'
+        values: "1x15"
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: HealthCheckFailing
+        exp_alerts: []
+      - eval_time: 11m
+        alertname: HealthCheckFailing
+        exp_alerts:
+          - exp_labels: {severity: warning, check: "service:nginx", instance: "app-1:9100", job: node}
+            exp_annotations:
+              summary: "Health check service:nginx failing on app-1:9100"
+
+  - name: a stale health check alerts
+    interval: 5m
+    input_series:
+      - series: 'server_healthcheck_last_run_timestamp_seconds{instance="app-1:9100", job="node"}'
+        values: "0x6"
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: HealthCheckStale
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: HealthCheckStale
+        exp_alerts:
+          - exp_labels: {severity: warning, instance: "app-1:9100", job: node}
+            exp_annotations:
+              summary: "The health check on app-1:9100 has not run for 15 minutes"
+
+  - name: a failed systemd unit alerts after 5 minutes
+    interval: 1m
+    input_series:
+      - series: 'node_systemd_unit_state{name="backup.service", state="failed", type="oneshot", instance="app-1:9100", job="node"}'
+        values: "1x10"
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: SystemdUnitFailed
+        exp_alerts:
+          - exp_labels: {severity: warning, name: backup.service, state: failed, type: oneshot, instance: "app-1:9100", job: node}
+            exp_annotations:
+              summary: "backup.service failed on app-1:9100"

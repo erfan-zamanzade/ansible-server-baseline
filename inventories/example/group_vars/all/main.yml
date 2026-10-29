@@ -1,0 +1,42 @@
+---
+ansible_user: erfan
+
+baseline_admin_users:
+  - name: erfan
+    ssh_keys:
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleKeyReplaceMeExampleKeyReplaceMe0 erfan@laptop
+baseline_unattended_extra_origins:
+  - "origin=Docker,label=Docker CE"
+
+firewall_ssh_sources: []
+firewall_monitoring_sources:
+  - 198.51.100.20   # Prometheus
+
+fail2ban_ignoreip:
+  - 198.51.100.0/24
+
+app_db_password: "{{ vault_app_db_password }}"
+
+nginx_sites:
+  - name: app
+    server_name: app.example.com
+    upstream: 127.0.0.1:8080
+    tls_certificate: "{{ vault_app_tls_certificate }}"
+    tls_private_key: "{{ vault_app_tls_private_key }}"
+    internal_locations: [/metrics]
+nginx_internal_networks:
+  - 127.0.0.1/32
+  - 198.51.100.20/32
+
+backup_restic_repository: sftp:backup@backup.example.com:/srv/restic/app-1
+backup_restic_password: "{{ vault_backup_restic_password }}"
+backup_postgres:
+  - container: app-postgres-1
+    database: app
+    user: app
+    verify_sql: SELECT count(*) FROM migrations
+    verify_min: 1
+
+healthcheck_http_checks:
+  - name: app
+    url: https://app.example.com/health

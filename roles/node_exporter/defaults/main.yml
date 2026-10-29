@@ -1,0 +1,23 @@
+---
+node_exporter_version: 1.12.1
+# SHA-256 of the release tarballs, from the release's sha256sums.txt.
+node_exporter_checksums:
+  amd64: b51d8a76aa2a9156a55d501aca6276fae09e262259a5e4e831d2c2222f084e63
+  arm64: ad35b605f9954b9f1ffddf5ba054bdc5a98d790b9eae5291e1eeb83f1ecbd0e7
+
+# Listen on all addresses; the firewall role limits port 9100 to the
+# monitoring network (firewall_monitoring_sources).
+node_exporter_listen_address: 0.0.0.0:9100
+
+# Other roles (backup, healthcheck) drop *.prom files here.
+node_exporter_textfile_dir: /var/lib/node_exporter/textfile
+
+# systemd units whose state is exported (node_systemd_unit_state).
+node_exporter_systemd_units:
+  - docker.service
+  - nginx.service
+  - ssh.service
+  - fail2ban.service
+  - nftables.service
+  - backup.service
+  - backup-verify.service

@@ -1,0 +1,68 @@
+# {{ ansible_managed }}
+# Only the app is published, and only on {{ app_listen.split(':')[0] }}; nginx proxies to it.
+
+x-app-env: &app-env
+  APP_NAME: laravel-cicd-pipeline
+  DB_CONNECTION: pgsql
+  DB_HOST: postgres
+  DB_PORT: "5432"
+  DB_DATABASE: {{ app_db_name }}
+  DB_USERNAME: {{ app_db_user }}
+  DB_PASSWORD: ${DB_PASSWORD:?set in .env}
+  REDIS_HOST: redis
+  CACHE_STORE: redis
+  METRICS_STORE: redis
+
+x-hardening: &hardening
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+
+services:
+  postgres:
+    image: {{ app_postgres_image }}
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: {{ app_db_name }}
+      POSTGRES_USER: {{ app_db_user }}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set in .env}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U {{ app_db_user }} -d {{ app_db_name }}"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  redis:
+    image: {{ app_redis_image }}
+    restart: unless-stopped
+    user: redis
+    <<: *hardening
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  app:
+    image: {{ app_image }}:{{ app_version }}
+    restart: unless-stopped
+    <<: *hardening
+    environment:
+      <<: *app-env
+      # Migrations run when the container starts, i.e. once per deploy (a new
+      # version recreates the container). A separate one-shot service would
+      # run again on every `compose up` and break idempotence.
+      AUTORUN_LARAVEL_MIGRATION: "true"
+    ports:
+      - "{{ app_listen }}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  postgres-data:

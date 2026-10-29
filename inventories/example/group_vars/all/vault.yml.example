@@ -1,0 +1,10 @@
+---
+# Copy to vault.yml, fill in, then: ansible-vault encrypt vault.yml
+vault_app_db_password: change-me
+vault_backup_restic_password: change-me-and-keep-a-copy-off-the-server
+vault_app_tls_certificate: |
+  -----BEGIN CERTIFICATE-----
+  ...
+vault_app_tls_private_key: |
+  -----BEGIN PRIVATE KEY-----
+  ...

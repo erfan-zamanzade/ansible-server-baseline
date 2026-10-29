@@ -1,0 +1,12 @@
+---
+galaxy_info:
+  author: Erfan Zamanzade
+  description: Server health-check script with a systemd timer and Prometheus textfile metrics
+  license: MIT
+  min_ansible_version: "2.18"
+  platforms:
+    - name: Debian
+      versions: [trixie]
+    - name: Ubuntu
+      versions: [noble, resolute]
+dependencies: []

@@ -1,0 +1,15 @@
+---
+# Deploys the demo service from github.com/erfan-zamanzade/laravel-cicd-pipeline
+# with Docker Compose: the app, PostgreSQL and Redis, published on localhost
+# only, behind the nginx role.
+app_dir: /srv/app
+app_project_name: app
+app_image: ghcr.io/erfan-zamanzade/laravel-cicd-pipeline
+app_version: 1.0.1
+app_listen: 127.0.0.1:8080
+app_postgres_image: postgres:17.11-alpine
+app_redis_image: redis:7.4.12-alpine
+app_db_name: app
+app_db_user: app
+# Required, no default. Keep it in Ansible Vault.
+# app_db_password:

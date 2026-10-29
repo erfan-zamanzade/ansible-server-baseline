@@ -1,0 +1,22 @@
+---
+- name: Apply network sysctls (per network namespace)
+  ansible.posix.sysctl:
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
+    sysctl_file: /etc/sysctl.d/90-baseline.conf
+    sysctl_set: true
+    reload: false
+  loop: "{{ baseline_sysctl_network | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}={{ item.value }}"
+
+- name: Apply kernel sysctls (host-wide)
+  ansible.posix.sysctl:
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
+    sysctl_file: /etc/sysctl.d/90-baseline.conf
+    sysctl_set: "{{ baseline_sysctl_apply_kernel | bool }}"
+    reload: false
+  loop: "{{ baseline_sysctl_kernel | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}={{ item.value }}{{ '' if baseline_sysctl_apply_kernel | bool else ' (file only)' }}"

@@ -1,0 +1,12 @@
+---
+galaxy_info:
+  author: Erfan Zamanzade
+  description: nftables input firewall that leaves Docker's and fail2ban's tables alone
+  license: MIT
+  min_ansible_version: "2.18"
+  platforms:
+    - name: Debian
+      versions: [trixie]
+    - name: Ubuntu
+      versions: [noble, resolute]
+dependencies: []

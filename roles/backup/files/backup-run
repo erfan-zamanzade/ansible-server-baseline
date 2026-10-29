@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# Dump the configured PostgreSQL databases, back up files and dumps with
+# restic, apply the retention policy and check the repository structure.
+# Publishes backup_* metrics for node_exporter whether it succeeds or not.
+set -euo pipefail
+# shellcheck source=roles/backup/files/backup-common.sh
+source /usr/local/lib/server-baseline/backup-common.sh
+
+STAGING=/var/backups/staging
+started="$(date +%s)"
+
+finish() {
+  local rc=$? now last_success
+  now="$(date +%s)"
+  last_success="$(previous_metric backup_last_success_timestamp_seconds backup)"
+  [[ $rc -eq 0 ]] && last_success="$now"
+  write_metrics backup <<METRICS
+# HELP backup_last_run_success 1 if the last backup run succeeded.
+# TYPE backup_last_run_success gauge
+backup_last_run_success $([[ $rc -eq 0 ]] && echo 1 || echo 0)
+# HELP backup_last_run_timestamp_seconds When the last backup run finished.
+# TYPE backup_last_run_timestamp_seconds gauge
+backup_last_run_timestamp_seconds $now
+# HELP backup_last_success_timestamp_seconds When the last successful backup finished.
+# TYPE backup_last_success_timestamp_seconds gauge
+backup_last_success_timestamp_seconds $last_success
+# HELP backup_duration_seconds Duration of the last backup run.
+# TYPE backup_duration_seconds gauge
+backup_duration_seconds $((now - started))
+METRICS
+  rm -rf "$STAGING"
+  if [[ $rc -eq 0 ]]; then log "backup finished in $((now - started))s"; else log "backup FAILED (exit $rc)"; fi
+}
+trap finish EXIT
+
+rm -rf "$STAGING"
+install -d -m 0700 "$STAGING"
+
+for entry in "${BACKUP_POSTGRES[@]}"; do
+  split_pg_entry "$entry"
+  log "dumping $PG_DATABASE from $PG_CONTAINER"
+  docker exec "$PG_CONTAINER" pg_dump --username="$PG_USER" --dbname="$PG_DATABASE" \
+    --format=custom --no-owner >"$STAGING/$PG_CONTAINER--$PG_DATABASE.dump"
+  [[ -s "$STAGING/$PG_CONTAINER--$PG_DATABASE.dump" ]] || die "empty dump of $PG_DATABASE"
+done
+
+exclude_args=()
+for pattern in "${BACKUP_EXCLUDES[@]}"; do exclude_args+=(--exclude "$pattern"); done
+
+log "backing up ${BACKUP_PATHS[*]} and ${#BACKUP_POSTGRES[@]} database dump(s)"
+restic backup --quiet --tag scheduled --host "$(hostname)" "${exclude_args[@]}" \
+  "${BACKUP_PATHS[@]}" "$STAGING"
+
+log "applying retention: daily $BACKUP_KEEP_DAILY, weekly $BACKUP_KEEP_WEEKLY, monthly $BACKUP_KEEP_MONTHLY"
+restic forget --quiet --tag scheduled --host "$(hostname)" --prune \
+  --keep-daily "$BACKUP_KEEP_DAILY" --keep-weekly "$BACKUP_KEEP_WEEKLY" --keep-monthly "$BACKUP_KEEP_MONTHLY"
+
+log "checking repository structure"
+restic check --quiet
