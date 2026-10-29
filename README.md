@@ -88,8 +88,8 @@ Requirements: Docker, Python 3.12, `make`. Everything else is installed inside t
 ```bash
 make tools                                # uv, virtualenv from requirements.txt (hash-checked), collections
 make lint                                 # yamllint, ansible-lint, shellcheck, promtool, actionlint
-make test-hardening DISTRO=debian13       # ~4 min
-make test-site DISTRO=ubuntu2404          # ~8 min
+make test-hardening DISTRO=debian13       # about 4 min
+make test-site DISTRO=ubuntu2404          # about 6-9 min
 make test                                 # both scenarios on all three distributions
 ```
 
@@ -178,7 +178,7 @@ Actions are pinned to commit SHAs, the workflow token is read-only and checkout 
 
 ## Cost
 
-$0. Public repository, GitHub-hosted runners, public base images, and the app image from GHCR. Locally, one `site` run peaks at about 1.5 GB of RAM.
+$0. Public repository, GitHub-hosted runners, public base images, and the app image from GHCR.
 
 ## Known limitations
 
@@ -189,4 +189,22 @@ $0. Public repository, GitHub-hosted runners, public base images, and the app im
 
 ## Verification evidence
 
-_Filled in after the first green CI run._
+**CI** ([run 40962060938](https://github.com/erfan-zamanzade/ansible-server-baseline/actions/runs/40962060938), commit `6862fa7`, GitHub-hosted amd64 runners): all seven jobs green.
+
+| Job | Duration | Result |
+|-----|----------|--------|
+| Lint | 41 s | yamllint, ansible-lint (production), shellcheck, 8 promtool rule tests, actionlint |
+| hardening on Debian 13 | 4 min | converge, idempotence, verify |
+| hardening on Ubuntu 24.04 | 3.5 min | converge, idempotence, verify |
+| hardening on Ubuntu 26.04 | 4.5 min | converge, idempotence, verify |
+| site on Debian 13 | 6 min | restore verification restored 667 files and loaded the database (3 migrations) |
+| site on Ubuntu 24.04 | 6.5 min | restore verification restored 678 files and loaded the database (3 migrations) |
+| site on Ubuntu 26.04 | 5.5 min | restore verification restored 739 files and loaded the database (3 migrations) |
+
+Seen from outside in every `site` job: ports 22, 80, 443 open, 9100 open to the monitoring address only, 8080 (app), 9323 (dockerd metrics) and 5432 dropped. `systemd-analyze security` rates the node_exporter unit **1.6 (OK)**. The restore drill brought the deleted database back with its marker row on all three distributions.
+
+In the `hardening` jobs, after six failed logins the SSH port went from open to silent for the Molecule host, stayed silent through an nftables restart, and opened again after the unban.
+
+The first CI run ([40958549999](https://github.com/erfan-zamanzade/ansible-server-baseline/actions/runs/40958549999)) was also green, but hardening on Debian 13 took 19 minutes: the ban landed in the middle of a test SSH connection and the client waited out the TCP retransmission timeout. The test now uses SSH keepalives and a hard timeout (commit `6862fa7`).
+
+**Locally** (arm64, Docker 29): both scenarios passed `molecule test` on all three distributions, which shows the roles and the node_exporter checksum selection work on both architectures. The local health check also reported the host disk at 91% used, which is why the test raises that threshold.
