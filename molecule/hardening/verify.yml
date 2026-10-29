@@ -7,8 +7,12 @@
     # The address the instance sees the Molecule host connecting from.
     controller_ip: "{{ ansible_facts['default_ipv4']['gateway'] }}"
     ssh_key: "{{ molecule_ephemeral_directory }}/id_test"
+    # ServerAlive: when fail2ban bans the address in the middle of a
+    # connection, its packets are dropped and without keepalives the client
+    # would wait for the kernel's TCP retransmission timeout (~15 minutes).
     ssh_opts: >-
       -i {{ ssh_key }} -p 2222 -o BatchMode=yes -o ConnectTimeout=5
+      -o ServerAliveInterval=2 -o ServerAliveCountMax=2
       -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR
   tasks:
     # --- baseline -----------------------------------------------------------
@@ -106,7 +110,7 @@
 
     # --- fail2ban drill -----------------------------------------------------
     - name: Fail SSH logins from the Molecule host until fail2ban reacts
-      ansible.builtin.command: ssh {{ ssh_opts }} -i /dev/null intruder@{{ instance_ip }} true
+      ansible.builtin.command: timeout 20 ssh {{ ssh_opts }} -i /dev/null intruder@{{ instance_ip }} true
       delegate_to: localhost
       register: bad_login
       changed_when: false
